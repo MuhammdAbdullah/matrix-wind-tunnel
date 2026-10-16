@@ -1,45 +1,252 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://cdn.jsdelivr.net;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wind Tunnel</title>
     <link rel="icon" type="image/x-icon" href="../assets/icon.ico">
+    <link rel="stylesheet" href="../assets/css/matrix-ui.css">
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <aside class="sidebar">
-        <div class="brand"><img src="../assets/Matrix 2024 White.png" alt="Matrix"><div>WIND<br>TUNNEL</div></div>
-        <div class="connection"><span id="connectionDot"></span><span id="connectionText">Searching for controller…</span><small id="portText">USB · VID 12BF / PID F010</small></div>
-        <nav>
-            <button class="nav active" data-view="control">⌁ <span>Control</span></button>
-            <button class="nav" data-view="calibrator">◌ <span>Calibrator</span></button>
-            <button class="nav" data-view="admin">⚙ <span>Admin</span></button>
-        </nav>
-        <div class="sidebar-foot"><span>API V2</span><span>● Online</span></div>
+<body class="min-h-screen bg-base-100 flex flex-col">
+
+<div id="wt-header" class="bg-base-200 border-b border-base-300 shadow-sm px-4 py-2 flex-shrink-0 flex items-center w-full">
+    <div class="flex-1 flex items-center gap-2 min-w-0">
+        <button id="sidebarToggle" class="btn btn-ghost btn-sm btn-square flex-shrink-0" aria-label="Toggle sidebar">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <img id="matrixLogo" src="../assets/Matrix 2024 White.png" alt="Matrix" class="logo-img flex-shrink-0">
+    </div>
+    <div class="flex flex-col items-center gap-1 flex-shrink-0 px-4">
+        <span class="font-sonic text-xl font-bold tracking-wider uppercase whitespace-nowrap brand-title">WIND TUNNEL</span>
+        <div id="connectionBadge" class="badge badge-warning badge-sm gap-1 font-bold tracking-wider uppercase">Searching for controller…</div>
+    </div>
+    <div class="flex-1 flex items-center justify-end gap-3">
+        <span id="portText" class="text-xs opacity-60">USB · VID 12BF / PID F010</span>
+        <select id="themeSelect" class="select select-bordered select-compact" aria-label="Theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+        </select>
+        <div id="clock" class="font-mono font-bold text-primary text-sm clock-nums hidden md:block"></div>
+        <button id="connectButton" class="btn btn-primary btn-sm">Connect</button>
+    </div>
+</div>
+
+<div class="flex flex-1 relative overflow-hidden">
+    <div id="sidebarBackdrop" class="fixed inset-0 bg-black/50 z-40 hidden"></div>
+    <aside id="sidebar" class="fixed md:static inset-y-0 left-0 z-50 sidebar-width border-r border-base-300 bg-base-200 flex flex-col overflow-hidden flex-shrink-0 sidebar-transition -translate-x-full md:translate-x-0">
+        <div class="flex justify-end p-2 md:hidden border-b border-base-300">
+            <button id="sidebarClose" class="btn btn-ghost btn-sm btn-square">✕</button>
+        </div>
+        <ul class="menu p-3 gap-1">
+            <li><a href="#" data-view="control" class="sidebar-link active">⌁ Control</a></li>
+            <li><a href="#" data-view="calibrator" class="sidebar-link">◌ Calibrator</a></li>
+            <li><a href="#" data-view="admin" class="sidebar-link">⚙ Admin</a></li>
+        </ul>
+        <div id="sidebarFoot" class="p-3 flex items-center justify-between text-xs opacity-60 border-t border-base-300">
+            <span>API V2</span>
+            <span id="sidebarOnline">● Online</span>
+        </div>
     </aside>
-    <main class="main">
-        <header class="topbar"><div><p class="eyebrow">MATRIX AERODYNAMICS</p><h1 id="viewTitle">Wind Tunnel Control</h1></div><div class="top-actions"><select id="themeSelect" class="theme-select" aria-label="Theme"><option value="dark">Dark</option><option value="light">Light</option></select><span id="clock"></span><button id="connectButton" class="button primary">Connect</button></div></header>
+
+    <main id="mainContent" class="flex-1 overflow-y-auto p-4">
+        <header class="flex items-center justify-between gap-4 view-header flex-wrap">
+            <div>
+                <p class="eyebrow">MATRIX AERODYNAMICS</p>
+                <h1 id="viewTitle" class="text-2xl font-bold">Wind Tunnel Control</h1>
+            </div>
+            <span id="lastUpdate" class="text-xs opacity-60">Last update: —</span>
+        </header>
+
+        <!-- CONTROL VIEW -->
         <section id="controlView" class="view">
-            <div class="status-line"><span class="pill success">● Controller detected</span><span>USB VID 12BF · PID F010</span><span>Last update <b id="lastUpdate">—</b></span></div>
             <div class="metrics" id="metrics"></div>
+
             <div class="control-grid">
-                <article class="panel controls"><div class="panel-heading"><div><p class="eyebrow">ACTUATORS</p><h2>Wind tunnel controls</h2></div><span class="pill neutral">Manual</span></div>
-                    <label>Fan speed <output id="fanValue">0%</output><input id="fanSlider" type="range" min="0" max="100" value="0"></label>
-                    <label>Motor angle <output id="angleValue">0°</output><input id="angleSlider" type="range" min="-180" max="180" value="0"></label>
-                    <div class="button-row"><button id="zeroSensors" class="button">Zero sensors</button><button id="zeroMotor" class="button">Zero motor</button></div>
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Wind tunnel controls</h2><span class="badge badge-neutral">Manual</span></div>
+                        <label>Fan speed <output id="fanValue">0%</output><input id="fanSlider" type="range" class="range" min="0" max="100" value="0"></label>
+                        <label>Motor angle <output id="angleValue">0°</output><input id="angleSlider" type="range" class="range" min="-180" max="180" value="0"></label>
+                        <div class="button-row">
+                            <button id="zeroSensors" class="btn btn-sm">Zero sensors</button>
+                            <button id="zeroMotor" class="btn btn-sm">Zero motor</button>
+                        </div>
+                    </div>
                 </article>
-                <article class="panel experiment"><div class="panel-heading"><div><p class="eyebrow">EXPERIMENT</p><h2>Experiment setup</h2></div><span class="pill accent">Ready</span></div>
-                    <label>Experiment<select id="experiment"><option>Convert Pressure to Velocity</option><option>Pressure Tapped Cylinder</option><option>Pressure Tapped Aerofoil</option><option>Lift Coefficient</option><option>Drag Coefficient</option><option>Stem Racing</option><option>Sensors vs Time</option><option>Custom</option></select></label>
-                    <div class="split"><label>Sample time<input value="1 s" id="sampleTime"></label><label>Graph traces<input value="Lift / Drag" id="graphTraces"></label></div>
-                    <div class="button-row"><button id="startSweep" class="button primary">Start sweep</button><button id="stopSweep" class="button danger">Stop</button></div>
+
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Experiment setup</h2><span id="sweepStatePill" class="badge badge-accent">Ready</span></div>
+                        <label>Experiment<select id="experimentSelect"></select></label>
+                        <div id="tappingFields" class="split hidden">
+                            <label>Tapping channel<input id="tappingChannel" type="number" min="1" max="23" value="1"></label>
+                            <label>Tapping increment<input id="tappingIncrement" type="number" min="0" max="6" value="1"></label>
+                        </div>
+                        <label id="dragShapeField" class="hidden">Drag shape
+                            <select id="dragShapeSelect"></select>
+                        </label>
+                        <div id="customAxesFields" class="split hidden">
+                            <label>Custom X<select id="customXSelect"></select></label>
+                            <label>Custom Y<select id="customYSelect"></select></label>
+                        </div>
+                        <div id="traceSelectionField" class="button-row hidden">
+                            <label><input type="checkbox" id="traceLift" checked> Lift</label>
+                            <label><input type="checkbox" id="traceDrag" checked> Drag</label>
+                            <label><input type="checkbox" id="tracePressure" checked> Pressure</label>
+                        </div>
+                        <div id="sweepFields" class="split hidden">
+                            <label>Start<input id="sweepStart" type="number"></label>
+                            <label>End<input id="sweepEnd" type="number"></label>
+                            <label>Step<input id="sweepStep" type="number"></label>
+                            <label>Delay (s)<input id="sweepDelay" type="number" min="0.1" step="0.1"></label>
+                        </div>
+                        <div id="sweepButtons" class="button-row hidden">
+                            <button id="startSweep" class="btn btn-primary btn-sm">Start sweep</button>
+                            <button id="stopSweep" class="btn btn-sm btn-outline">Stop</button>
+                        </div>
+                        <div class="button-row">
+                            <button id="startLog" class="btn btn-sm">Start log</button>
+                            <button id="stopLog" class="btn btn-sm btn-outline">Stop log</button>
+                        </div>
+                        <p id="logStatus" class="text-xs opacity-60 mt-2">Logging idle.</p>
+                    </div>
                 </article>
             </div>
-            <div class="charts"><article class="panel chart-panel"><div class="panel-heading"><div><p class="eyebrow">LIVE SENSOR DATA</p><h2 id="chartTitle">Lift, drag and pressure</h2></div><span class="legend"><i class="lift"></i>Lift <i class="drag"></i>Drag <i class="pressure"></i>Pressure</span></div><canvas id="liveChart"></canvas></article><article class="panel chart-panel historic"><div class="panel-heading"><div><p class="eyebrow">EXPERIMENT HISTORY</p><h2>Logged experiment data</h2></div><button id="clearChart" class="icon-button">Clear</button></div><div id="historyEmpty" class="chart-empty">No experiment data logged yet. Start a sweep or enable logging to populate this chart.</div><canvas id="historyChart"></canvas></article></div>
+
+            <div class="charts">
+                <article class="card bg-base-200 border border-base-300 chart-panel">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 id="liveChartTitle" class="card-title text-base">Live sensor data</h2></div>
+                        <div class="chart-wrap"><canvas id="liveChart"></canvas></div>
+                    </div>
+                </article>
+                <article class="card bg-base-200 border border-base-300 chart-panel historic">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Experiment history</h2><button id="clearChart" class="btn btn-ghost btn-xs">Clear</button></div>
+                        <div id="historyEmpty" class="chart-empty">No experiment data logged yet. Start a sweep or enable logging to populate this chart.</div>
+                        <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
+                    </div>
+                </article>
+            </div>
         </section>
-        <section id="calibratorView" class="view hidden"><div class="section-intro"><p class="eyebrow">ADMIN WORKFLOW</p><h2>Wind Tunnel Calibrator</h2><p>Calibration writes are available only while Control is idle. Every change is acknowledged by the controller before it is shown as saved.</p></div><div class="admin-lock"><span>🔒 Admin authorisation required for calibration writes.</span><button id="unlockCalibrator" class="button">Unlock</button></div><div class="calibration-grid"><article class="panel"><div class="panel-heading"><h2>Sensor scalers</h2><span class="pill neutral">Absolute</span></div><div class="cal-row"><label>Lift <input value="0.755" id="liftScaler"></label><button class="button calibration" data-action="Save lift scaler">Save</button></div><div class="cal-row"><label>Drag <input value="0.698" id="dragScaler"></label><button class="button calibration" data-action="Save drag scaler">Save</button></div><div class="cal-row"><label>Pressure <input value="0.150" id="pressureScaler"></label><button class="button calibration" data-action="Save pressure scaler">Save</button></div><button class="button calibration" data-action="Calibrate display">Calibrate display</button></article><article class="panel"><div class="panel-heading"><h2>Velocity lookup table</h2><span class="pill neutral">10 points</span></div><div class="lut" id="lut"></div><button class="button calibration" data-action="Save velocity lookup table">Save LUT</button></article></div></section>
-        <section id="adminView" class="view hidden"><div class="section-intro"><p class="eyebrow">PROTECTED AREA</p><h2>Administration</h2><p>Device diagnostics, connection status, firmware maintenance, application updates, and audit information.</p></div><div class="admin-lock"><span>🔒 Admin session: <b id="adminStatus">Locked</b></span><button id="unlockAdmin" class="button">Unlock Admin</button></div><div class="admin-grid"><article class="panel"><div class="panel-heading"><h2>Device diagnostics</h2><span id="adminConnectionPill" class="pill warning">Searching</span></div><dl class="details"><dt>API version</dt><dd>2</dd><dt>USB identity</dt><dd>0x12BF / 0xF010</dd><dt>Transport</dt><dd id="adminTransport">USB serial · waiting</dd><dt>TCP</dt><dd>Preserved legacy configuration</dd></dl><button class="button" id="refreshDiagnostics">Refresh diagnostics</button><pre id="diagnostics" class="diagnostics">No diagnostics yet.</pre></article><article class="panel"><div class="panel-heading"><h2>Firmware</h2><span class="pill warning">Admin + UAC</span></div><p>Approved image: <code>WindTunnel V2.0.6.hex</code></p><p class="muted">Flashing uses the existing loader and requires Windows administrator elevation.</p><button class="button danger" id="firmwareButton">Open firmware updater</button></article><article class="panel"><div class="panel-heading"><h2>Application updates</h2><span class="pill neutral">Electron</span></div><p>Check for a signed Wind Tunnel application release. Installing an app update does not change firmware or calibration.</p><button class="button" id="updateButton">Check for updates</button></article></div><article class="panel log-panel"><div class="panel-heading"><div><p class="eyebrow">SYSTEM STATUS</p><h2>Activity log</h2></div><button id="clearLog" class="icon-button">Clear</button></div><div id="log" class="log"></div></article></section>
+
+        <!-- CALIBRATOR VIEW -->
+        <section id="calibratorView" class="view hidden">
+            <div class="section-intro">
+                <p class="eyebrow">ADMIN WORKFLOW</p>
+                <p>Calibration writes are available only while Control is idle and Admin is unlocked. Every change is read back from the controller before it is shown as saved.</p>
+            </div>
+            <div class="admin-lock">
+                <span>🔒 Admin authorisation required for calibration writes. <b id="calibratorLockStatus">Locked</b></span>
+                <button id="unlockCalibrator" class="btn btn-sm">Unlock</button>
+            </div>
+            <div class="calibration-grid">
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Sensor scalers</h2><button id="refreshScalers" class="btn btn-ghost btn-xs">Refresh</button></div>
+                        <div class="cal-row"><label>Lift <input id="liftScaler" value="0.755"></label><select id="liftMode"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-sm calibration" data-scaler="0">Save</button></div>
+                        <div class="cal-row"><label>Drag <input id="dragScaler" value="0.698"></label><select id="dragMode"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-sm calibration" data-scaler="1">Save</button></div>
+                        <div class="cal-row"><label>Pressure <input id="pressureScaler" value="0.150"></label><select id="pressureMode"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-sm calibration" data-scaler="2">Save</button></div>
+                        <button id="calibrateDisplayBtn" class="btn btn-sm mt-2">Calibrate display</button>
+                        <p id="scalerAck" class="text-xs opacity-60 mt-2">No write yet this session.</p>
+                    </div>
+                </article>
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Velocity lookup table</h2><button id="refreshLut" class="btn btn-ghost btn-xs">Refresh</button></div>
+                        <div class="lut" id="lut"></div>
+                        <p id="lutAck" class="text-xs opacity-60">No write yet this session.</p>
+                    </div>
+                </article>
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Network configuration</h2></div>
+                        <div class="split">
+                            <label>IP<input id="networkIp" value="192.168.1.150"></label>
+                            <label>Port<input id="networkPort" type="number" value="80"></label>
+                        </div>
+                        <button id="saveNetwork" class="btn btn-sm mt-2">Save network settings</button>
+                        <p id="networkAck" class="text-xs opacity-60 mt-2">TCP behavior is unchanged from the legacy app.</p>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <!-- ADMIN VIEW -->
+        <section id="adminView" class="view hidden">
+            <div class="section-intro">
+                <p class="eyebrow">PROTECTED AREA</p>
+                <p>Device diagnostics, connection status, firmware maintenance, application updates, and audit information.</p>
+            </div>
+            <div class="admin-lock">
+                <span>🔒 Admin session: <b id="adminStatus">Locked</b></span>
+                <button id="unlockAdmin" class="btn btn-sm">Unlock Admin</button>
+            </div>
+            <div class="admin-grid">
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Device diagnostics</h2><span id="adminConnectionPill" class="badge badge-warning">Searching</span></div>
+                        <dl class="details">
+                            <dt>API version</dt><dd>2</dd>
+                            <dt>USB identity</dt><dd>0x12BF / 0xF010</dd>
+                            <dt>Transport</dt><dd id="adminTransport">USB serial · waiting</dd>
+                            <dt>Retries</dt><dd id="adminRetries">0</dd>
+                            <dt>Errors</dt><dd id="adminErrors">0</dd>
+                            <dt>TCP</dt><dd>Preserved legacy configuration</dd>
+                        </dl>
+                        <button class="btn btn-sm mt-2" id="refreshDiagnostics">Refresh diagnostics</button>
+                        <pre id="diagnostics" class="diagnostics">No diagnostics yet.</pre>
+                    </div>
+                </article>
+
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Firmware</h2><span class="badge badge-warning">Admin + UAC</span></div>
+                        <p>Approved image: <code>WindTunnel V2.0.6.hex</code></p>
+                        <p id="firmwareBanner" class="update-status-message error">Firmware operations disabled — bootloader protocol not confirmed.</p>
+                        <input type="file" id="hexFile" accept=".hex" class="mt-2">
+                        <div class="button-row mt-2">
+                            <button class="btn btn-sm firmware-action" data-action="detect">Detect</button>
+                            <button class="btn btn-sm btn-outline firmware-action" data-action="erase">Erase</button>
+                            <button class="btn btn-sm btn-outline firmware-action" data-action="program">Program</button>
+                            <button class="btn btn-sm btn-outline firmware-action" data-action="verify">Verify</button>
+                            <button class="btn btn-sm btn-outline firmware-action" data-action="run">Run</button>
+                        </div>
+                        <pre id="firmwareLog" class="diagnostics mt-2">No firmware activity yet.</pre>
+                    </div>
+                </article>
+
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Application updates</h2><span class="badge badge-neutral">Electron</span></div>
+                        <p>Check for a signed Wind Tunnel application release. Installing an app update does not change firmware or calibration.</p>
+                        <button class="btn btn-sm mt-2" id="updateButton">Check for updates</button>
+                    </div>
+                </article>
+
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Configuration and audit</h2><button id="refreshAudit" class="btn btn-ghost btn-xs">Refresh</button></div>
+                        <p class="text-xs opacity-60">Shows which view (Control or Calibrator) initiated each command sent to the controller.</p>
+                        <div id="auditLog" class="log"></div>
+                    </div>
+                </article>
+            </div>
+
+            <article class="card bg-base-200 border border-base-300 log-panel">
+                <div class="card-body">
+                    <div class="panel-heading"><h2 class="card-title text-base">Activity log</h2><button id="clearLog" class="btn btn-ghost btn-xs">Clear</button></div>
+                    <div id="log" class="log"></div>
+                </div>
+            </article>
+        </section>
     </main>
-    <script src="app.js"></script>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="charts.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

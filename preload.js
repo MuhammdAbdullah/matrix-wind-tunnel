@@ -4,7 +4,6 @@ contextBridge.exposeInMainWorld('windTunnel', {
     getState: () => ipcRenderer.invoke('device:getState'),
     listPorts: () => ipcRenderer.invoke('device:listPorts'),
     connectPort: (port, baudRate) => ipcRenderer.invoke('device:connectPort', port, baudRate),
-    connect: () => ipcRenderer.invoke('device:connect'),
     disconnect: () => ipcRenderer.invoke('device:disconnect'),
     setFanSpeed: (value) => ipcRenderer.invoke('device:setFanSpeed', value),
     setAngle: (value) => ipcRenderer.invoke('device:setAngle', value),
@@ -12,11 +11,40 @@ contextBridge.exposeInMainWorld('windTunnel', {
     zeroMotor: () => ipcRenderer.invoke('device:zeroMotor'),
     sendCommand: (command, payload) => ipcRenderer.invoke('device:sendCommand', command, payload),
     getDiagnostics: () => ipcRenderer.invoke('device:getDiagnostics'),
-    calibration: (payload) => ipcRenderer.invoke('admin:calibration', payload),
-    firmware: () => ipcRenderer.invoke('admin:firmware'),
+
+    listExperiments: () => ipcRenderer.invoke('experiment:list'),
+    selectExperiment: (experimentId) => ipcRenderer.invoke('experiment:select', experimentId),
+    setTapping: (channel, increment) => ipcRenderer.invoke('experiment:setTapping', { channel, increment }),
+    setCustomAxes: (xField, yField) => ipcRenderer.invoke('experiment:setCustomAxes', { xField, yField }),
+    setDragShape: (shape) => ipcRenderer.invoke('experiment:setDragShape', shape),
+
+    startAngleSweep: (options) => ipcRenderer.invoke('sweep:startAngle', options),
+    startFanSweep: (options) => ipcRenderer.invoke('sweep:startFan', options),
+    stopSweep: () => ipcRenderer.invoke('sweep:stop'),
+    getSweepStatus: () => ipcRenderer.invoke('sweep:status'),
+
+    startLog: () => ipcRenderer.invoke('log:start'),
+    stopLog: () => ipcRenderer.invoke('log:stop'),
+    getLogStatus: () => ipcRenderer.invoke('log:status'),
+    setLogFolder: (folder) => ipcRenderer.invoke('log:setFolder', folder),
+
+    setScaler: (channel, mode, value) => ipcRenderer.invoke('calibration:setScaler', { channel, mode, value }),
+    getScalers: () => ipcRenderer.invoke('calibration:getScalers'),
+    setLutEntry: (index, velocity) => ipcRenderer.invoke('calibration:setLutEntry', { index, velocity }),
+    getLut: () => ipcRenderer.invoke('calibration:getLut'),
+    calibrateDisplay: () => ipcRenderer.invoke('calibration:calibrateDisplay'),
+    setNetwork: (ip0, ip1, ip2, ip3, port) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port }),
+
+    firmware: (action, hexPath) => ipcRenderer.invoke('admin:firmware', { action, hexPath }),
     adminStatus: () => ipcRenderer.invoke('admin:status'),
     verifyAdmin: (password) => ipcRenderer.invoke('admin:verify', password),
     setupAdmin: (password) => ipcRenderer.invoke('admin:setup', password),
+    lockAdmin: () => ipcRenderer.invoke('admin:lock'),
+    getAuditLog: () => ipcRenderer.invoke('admin:getAuditLog'),
     requestElevation: () => ipcRenderer.invoke('admin:requestElevation'),
-    onState: (callback) => ipcRenderer.on('state:update', (_event, value) => callback(value))
+
+    onState: (callback) => ipcRenderer.on('state:update', (_event, value) => callback(value)),
+    onAuditUpdate: (callback) => ipcRenderer.on('audit:update', (_event, value) => callback(value)),
+    onLogEvent: (callback) => ipcRenderer.on('log:event', (_event, value) => callback(value)),
+    onFirmwareProgress: (callback) => ipcRenderer.on('firmware:progress', (_event, value) => callback(value))
 });

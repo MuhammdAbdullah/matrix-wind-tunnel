@@ -1,0 +1,27 @@
+const state = { history: [], connected: false, sweeping: false };
+const $ = (id) => document.getElementById(id);
+const format = (value, digits = 2) => Number(value || 0).toFixed(digits);
+
+function log(message, level = 'info') { const row = document.createElement('div'); row.textContent = `${new Date().toLocaleTimeString()}  ${level.toUpperCase()}  ${message}`; $('log').prepend(row); }
+function renderMetrics(sensors) { $('metrics').innerHTML = [['LIFT', sensors.lift, 'mN'], ['DRAG', sensors.drag, 'mN'], ['PRESSURE', sensors.pressure, 'Pa'], ['AIR SPEED', sensors.velocity, 'm/s']].map(([name, value, unit]) => `<div class="metric"><div class="metric-name">${name}</div><div class="metric-value">${format(value)}</div><div class="metric-unit">${unit}</div><div class="metric-accent"></div></div>`).join(''); }
+function drawChart(canvasId, values, color, max = 10) { const canvas = $(canvasId); const ctx = canvas.getContext('2d'); const width = canvas.clientWidth * devicePixelRatio; const height = canvas.clientHeight * devicePixelRatio; canvas.width = width; canvas.height = height; ctx.clearRect(0, 0, width, height); ctx.strokeStyle = '#173348'; ctx.lineWidth = 1; for (let y = 1; y < 5; y++) { ctx.beginPath(); ctx.moveTo(0, height * y / 5); ctx.lineTo(width, height * y / 5); ctx.stroke(); } if (values.length < 2) return; ctx.strokeStyle = color; ctx.lineWidth = 2 * devicePixelRatio; ctx.beginPath(); values.forEach((value, index) => { const x = index / Math.max(values.length - 1, 1) * width; const y = height - Math.min(Math.max(value / max, 0), 1) * height * .9 - height * .05; index ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+function renderCharts(sensors) { const series = state.history.slice(-60); drawChart('liveChart', series.map((p) => p.lift), '#47c2ee', 200); drawChart('historyChart', series.map((p) => p.pressure), '#b783e8', 650); }
+function render(value) { state.connected = value.connected; $('connectionText').textContent = value.connected ? 'Controller connected' : 'Simulation ready'; $('portText').textContent = `${value.port} · API ${value.apiVersion}`; $('connectionDot').style.background = value.connected ? '#4de19d' : '#f1b15a'; $('connectButton').textContent = value.connected ? 'Disconnect' : 'Connect'; $('fanSlider').value = value.fanSpeed; $('angleSlider').value = value.angle; $('fanValue').textContent = `${value.fanSpeed}%`; $('angleValue').textContent = `${value.angle}°`; renderMetrics(value.sensors); state.history.push({ ...value.sensors }); renderCharts(value.sensors); $('lastUpdate').textContent = new Date().toLocaleTimeString(); }
+function setView(view) { document.querySelectorAll('.view').forEach((el) => el.classList.add('hidden')); $(`${view}View`).classList.remove('hidden'); document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.view === view)); $('viewTitle').textContent = view === 'control' ? 'Wind Tunnel Control' : view === 'calibrator' ? 'Wind Tunnel Calibrator' : 'Administration'; }
+
+document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
+$('connectButton').addEventListener('click', async () => { if (state.connected) { await window.windTunnel.disconnect(); log('Controller disconnected; fan command set to zero'); } else { await window.windTunnel.connect(); log('Controller connected in simulation mode'); } });
+$('fanSlider').addEventListener('change', async (event) => { await window.windTunnel.setFanSpeed(event.target.value); log(`Fan speed set to ${event.target.value}%`); });
+$('angleSlider').addEventListener('change', async (event) => { await window.windTunnel.setAngle(event.target.value); log(`Motor angle set to ${event.target.value}°`); });
+$('zeroSensors').addEventListener('click', async () => { const result = await window.windTunnel.zeroSensors(); log(result.message); });
+$('zeroMotor').addEventListener('click', async () => { await window.windTunnel.zeroMotor(); log('Motor zero command acknowledged'); });
+document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => { const result = await window.windTunnel.calibration({ action: button.dataset.action }); log(result.message, result.ok ? 'info' : 'error'); }));
+$('startSweep').addEventListener('click', () => { state.sweeping = !state.sweeping; $('startSweep').textContent = state.sweeping ? 'Sweep running' : 'Start sweep'; log(state.sweeping ? 'Experiment sweep started' : 'Experiment sweep stopped'); });
+$('clearChart').addEventListener('click', () => { state.history.length = 0; renderCharts({}); log('Chart history cleared'); });
+$('clearLog').addEventListener('click', () => { $('log').innerHTML = ''; });
+$('firmwareButton').addEventListener('click', async () => { const result = await window.windTunnel.firmware(); log(result.message, 'error'); });
+$('updateButton').addEventListener('click', () => log('No signed application update service configured yet'));
+window.windTunnel.onState(render);
+window.windTunnel.getState().then((value) => { render(value); log('Wind Tunnel UI ready; simulation transport active'); });
+setInterval(() => { $('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }, 1000);
+for (let index = 1; index <= 10; index++) { const input = document.createElement('input'); input.value = ['5.65', '11.30', '15.98', '17.87', '19.58', '21.15', '21.89', '22.10', '22.40', '22.80'][index - 1]; input.title = `Fan ${index * 10}%`; $('lut').append(input); }

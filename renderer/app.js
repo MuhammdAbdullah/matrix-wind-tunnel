@@ -1,4 +1,4 @@
-const state = { history: [], connected: false, sweeping: false };
+const state = { history: [], connected: false, sweeping: false, adminUnlocked: false };
 const $ = (id) => document.getElementById(id);
 const format = (value, digits = 2) => Number(value || 0).toFixed(digits);
 
@@ -10,16 +10,23 @@ function render(value) { state.connected = value.connected; $('connectionText').
 function setView(view) { document.querySelectorAll('.view').forEach((el) => el.classList.add('hidden')); $(`${view}View`).classList.remove('hidden'); document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.view === view)); $('viewTitle').textContent = view === 'control' ? 'Wind Tunnel Control' : view === 'calibrator' ? 'Wind Tunnel Calibrator' : 'Administration'; }
 
 document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => setView(button.dataset.view)));
-$('connectButton').addEventListener('click', async () => { if (state.connected) { await window.windTunnel.disconnect(); log('Controller disconnected; fan command set to zero'); } else { await window.windTunnel.connect(); log('Controller connected in simulation mode'); } });
+$('themeSelect').value = localStorage.getItem('wind-tunnel-theme') || 'dark';
+document.body.classList.toggle('light', $('themeSelect').value === 'light');
+$('themeSelect').addEventListener('change', (event) => { const theme = event.target.value; document.body.classList.toggle('light', theme === 'light'); localStorage.setItem('wind-tunnel-theme', theme); log(`Theme changed to ${theme}`); });
+$('connectButton').addEventListener('click', async () => { if (state.connected) { await window.windTunnel.disconnect(); log('Controller disconnected; fan command set to zero'); return; } try { const ports = await window.windTunnel.listPorts(); if (ports.length) { const selected = window.prompt(`Available USB ports:\n${ports.map((port) => port.path).join('\n')}\n\nEnter port path (or leave blank for simulation):`, ports[0].path); if (selected) { await window.windTunnel.connectPort(selected, 115200); log(`Connected to ${selected} at 115200 baud`); return; } } await window.windTunnel.connect(); log('Controller connected in simulation mode'); } catch (error) { log(`Connection failed: ${error.message}`, 'error'); } });
 $('fanSlider').addEventListener('change', async (event) => { await window.windTunnel.setFanSpeed(event.target.value); log(`Fan speed set to ${event.target.value}%`); });
 $('angleSlider').addEventListener('change', async (event) => { await window.windTunnel.setAngle(event.target.value); log(`Motor angle set to ${event.target.value}°`); });
 $('zeroSensors').addEventListener('click', async () => { const result = await window.windTunnel.zeroSensors(); log(result.message); });
 $('zeroMotor').addEventListener('click', async () => { await window.windTunnel.zeroMotor(); log('Motor zero command acknowledged'); });
-document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => { const result = await window.windTunnel.calibration({ action: button.dataset.action }); log(result.message, result.ok ? 'info' : 'error'); }));
+async function unlockAdmin() { const password = window.prompt('Enter Admin password'); if (!password) return false; const status = await window.windTunnel.adminStatus(); const result = status.configured ? await window.windTunnel.verifyAdmin(password) : await window.windTunnel.setupAdmin(password); if (result.ok) { state.adminUnlocked = true; $('adminStatus').textContent = 'Unlocked'; $('unlockAdmin').textContent = 'Lock Admin'; $('unlockCalibrator').textContent = 'Admin unlocked'; log('Admin session unlocked'); return true; } log(result.needsSetup ? 'Admin setup required' : 'Admin password rejected', 'error'); return false; }
+$('unlockAdmin').addEventListener('click', async () => { if (state.adminUnlocked) { state.adminUnlocked = false; $('adminStatus').textContent = 'Locked'; $('unlockAdmin').textContent = 'Unlock Admin'; $('unlockCalibrator').textContent = 'Unlock'; log('Admin session locked'); } else await unlockAdmin(); });
+$('unlockCalibrator').addEventListener('click', async () => { if (!state.adminUnlocked) await unlockAdmin(); });
+document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => { if (!state.adminUnlocked) { log('Calibration write blocked: unlock Admin first', 'error'); return; } if (state.sweeping) { log('Calibration write blocked: stop the active sweep first', 'error'); return; } const result = await window.windTunnel.calibration({ action: button.dataset.action }); log(result.message, result.ok ? 'info' : 'error'); }));
 $('startSweep').addEventListener('click', () => { state.sweeping = !state.sweeping; $('startSweep').textContent = state.sweeping ? 'Sweep running' : 'Start sweep'; log(state.sweeping ? 'Experiment sweep started' : 'Experiment sweep stopped'); });
 $('clearChart').addEventListener('click', () => { state.history.length = 0; renderCharts({}); log('Chart history cleared'); });
 $('clearLog').addEventListener('click', () => { $('log').innerHTML = ''; });
 $('firmwareButton').addEventListener('click', async () => { const result = await window.windTunnel.firmware(); log(result.message, 'error'); });
+$('refreshDiagnostics').addEventListener('click', async () => { const diagnostics = await window.windTunnel.getDiagnostics(); $('diagnostics').textContent = JSON.stringify(diagnostics, null, 2); log('Diagnostics refreshed'); });
 $('updateButton').addEventListener('click', () => log('No signed application update service configured yet'));
 window.windTunnel.onState(render);
 window.windTunnel.getState().then((value) => { render(value); log('Wind Tunnel UI ready; simulation transport active'); });

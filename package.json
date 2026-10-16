@@ -6,6 +6,7 @@
     "private": true,
     "scripts": {
         "start": "electron .",
+        "simulate": "electron . --simulate",
         "dev": "electron . --dev",
         "build-win": "electron-builder --win"
     },

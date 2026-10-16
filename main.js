@@ -18,8 +18,8 @@ let pendingCommand = null;
 const appDataPath = () => path.join(app.getPath('userData'), 'wind-tunnel-admin.json');
 let state = {
     connected: false,
-    simulation: true,
-    port: 'Simulation',
+    simulation: process.argv.includes('--simulate') || process.env.WIND_TUNNEL_SIMULATION === '1',
+    port: null,
     apiVersion: API_VERSION,
     fanSpeed: 0,
     angle: 0,
@@ -115,6 +115,8 @@ ipcMain.handle('device:connectPort', async (_event, portPath, baudRate = 115200)
 ipcMain.handle('device:disconnect', () => {
     if (serialPort?.isOpen) serialPort.close(); serialPort = null;
     state.connected = false;
+    state.port = null;
+    state.simulation = false;
     state.fanSpeed = 0;
     simulateSensors();
     return state;
@@ -161,6 +163,8 @@ ipcMain.handle('admin:requestElevation', async () => { await dialog.showMessageB
 
 app.whenReady().then(() => {
     createWindow();
+    if (state.simulation) { state.port = 'Simulation'; state.connected = true; publish(); }
+    else startAutoConnect();
     setInterval(async () => {
         if (state.simulation) simulateSensors();
         else if (serialPort?.isOpen) { try { const payload = await sendBinary('C'); if (payload.length >= 16) { state.sensors = { lift: payload.readFloatLE(0), drag: payload.readFloatLE(4), pressure: payload.readFloatLE(8), velocity: payload.readFloatLE(12) }; publish(); } } catch (_error) { state.diagnostics.errors += 1; publish(); } }
@@ -168,5 +172,36 @@ app.whenReady().then(() => {
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+let autoConnectTimer;
+let autoConnectBusy = false;
+async function startAutoConnect() {
+    const scan = async () => {
+        if (autoConnectBusy || state.connected || !SerialPort) return;
+        autoConnectBusy = true;
+        try {
+            const ports = await SerialPort.list();
+            const target = ports.find((port) => String(port.vendorId || '').toUpperCase() === '12BF' && String(port.productId || '').toUpperCase() === 'F010');
+            if (target) {
+                try { await connectHardware(target.path, 115200); } catch (error) { state.diagnostics.errors += 1; publish(); }
+            }
+        } finally { autoConnectBusy = false; }
+    };
+    await scan();
+    autoConnectTimer = setInterval(scan, 2000);
+}
+async function connectHardware(portPath, baudRate) {
+    if (!SerialPort) throw new Error('SerialPort dependency is not installed');
+    if (serialPort?.isOpen) await new Promise((resolve) => serialPort.close(resolve));
+    serialPort = new SerialPort({ path: portPath, baudRate, autoOpen: false });
+    serialPort.on('data', (chunk) => { record('rx', chunk); parseFrames(chunk).forEach(parseResponse); });
+    serialPort.on('error', () => { state.diagnostics.errors += 1; publish(); });
+    serialPort.on('close', () => { state.connected = false; state.port = null; publish(); });
+    await new Promise((resolve, reject) => serialPort.open((error) => error ? reject(error) : resolve()));
+    state.connected = true; state.simulation = false; state.port = portPath; publish();
+    const version = await sendBinary('A');
+    if (!version.length || version[0] !== API_VERSION) throw new Error(`Unsupported controller API version: ${version[0] ?? 'unknown'}`);
+    return state;
+}
 
 module.exports = { USB_VENDOR_ID, USB_PRODUCT_ID };

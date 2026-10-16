@@ -9,7 +9,7 @@ npm install
 npm start
 ```
 
-The first build runs in safe simulation mode when no controller transport is available. The transport layer is isolated in `main.js` and follows the approved Wind Tunnel V2.0.6 framing. Hardware connection, serial device enumeration, firmware flashing, and secure Admin storage are deliberately kept behind the preload bridge.
+The production build searches automatically for the approved controller (VID `0x12BF`, PID `0xF010`) and connects at `115200` baud when it appears. Simulation is opt-in for development only: launch with `npm start -- --simulate`. The transport layer is isolated in `main.js` and follows the approved Wind Tunnel V2.0.6 framing.
 
 ## Git boundary
 

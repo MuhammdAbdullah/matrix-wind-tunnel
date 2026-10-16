@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -34,12 +34,15 @@ function createWindow() {
         minWidth: 1100,
         minHeight: 720,
         backgroundColor: '#08111c',
+        icon: path.join(__dirname, 'assets', 'icon.ico'),
+        autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false
         }
     });
+    mainWindow.setMenuBarVisibility(false);
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
@@ -162,6 +165,7 @@ ipcMain.handle('admin:setup', (_event, password) => {
 ipcMain.handle('admin:requestElevation', async () => { await dialog.showMessageBox({ type: 'info', title: 'Windows administrator approval', message: 'Firmware operations must be performed by an elevated helper and are disabled in this build.' }); return false; });
 
 app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
     createWindow();
     if (state.simulation) { state.port = 'Simulation'; state.connected = true; publish(); }
     else startAutoConnect();

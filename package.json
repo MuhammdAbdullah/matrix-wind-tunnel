@@ -23,6 +23,6 @@
         "productName": "Wind Tunnel",
         "directories": { "output": "dist" },
         "files": ["main.js", "preload.js", "renderer/**/*", "assets/**/*", "package.json"],
-        "win": { "target": "nsis", "artifactName": "Wind-Tunnel-Setup-${version}.${ext}" }
+        "win": { "target": "nsis", "icon": "assets/icon.ico", "artifactName": "Wind-Tunnel-Setup-${version}.${ext}" }
     }
 }

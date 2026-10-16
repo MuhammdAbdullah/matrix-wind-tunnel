@@ -17,6 +17,8 @@ This independent repository contains the new Windows Electron **Wind Tunnel** ap
 
 Follow the Process Control frontend language: Matrix logo, Azonix headings, dark/light themes, sidebar navigation, status pills, responsive cards, accessible controls, and resize-safe chart panels. The layout must work at desktop, tablet, mobile, portrait, landscape, short-height, and maximized window sizes.
 
+Use `assets/icon.ico` as the application icon and HTML favicon for the Wind Tunnel window and Windows installer. The native Electron application menu bar (`File`, `Edit`, `View`, `Window`) must remain hidden in the production app; provide required actions through the app UI instead.
+
 Control contains live sensors, fan/angle controls, experiments, sweeps, live charts, and operator actions. Admin contains connection diagnostics, API/USB identity, raw TX/RX, retry/error counts, system log, calibration, firmware, and application updates.
 
 “Experiment History” means logged sweep/experiment points only; it must not be a copy of the rolling live sensor buffer. It remains empty until real experiment data is recorded.

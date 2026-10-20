@@ -8,8 +8,10 @@
         "start": "electron .",
         "simulate": "electron . --simulate",
         "dev": "electron . --dev",
-        "build-win": "electron-builder --win",
-        "rebuild-hid": "electron-rebuild -f -w node-hid"
+        "build-win": "electron-builder --win --publish never",
+        "rebuild-hid": "electron-rebuild -f -w node-hid",
+        "build-mac": "electron-builder --mac --publish never",
+        "build-linux": "electron-builder --linux --publish never"
     },
     "devDependencies": {
         "electron": "^43.1.0",
@@ -23,8 +25,78 @@
     "build": {
         "appId": "com.matrix.windtunnel",
         "productName": "Wind Tunnel",
-        "directories": { "output": "dist" },
-        "files": ["main.js", "preload.js", "renderer/**/*", "assets/**/*", "package.json"],
-        "win": { "target": "nsis", "icon": "assets/icon.ico", "artifactName": "Wind-Tunnel-Setup-${version}.${ext}" }
-    }
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "main.js",
+            "preload.js",
+            "renderer/**/*",
+            "assets/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "assets/icon.ico",
+            "artifactName": "Wind-Tunnel-Setup-${version}-win-${arch}.${ext}"
+        },
+        "publish": {
+            "provider": "github",
+            "owner": "MuhammdAbdullah",
+            "repo": "matrix-wind-tunnel"
+        },
+        "mac": {
+            "target": [
+                {
+                    "target": "dmg",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                },
+                {
+                    "target": "zip",
+                    "arch": [
+                        "x64",
+                        "arm64"
+                    ]
+                }
+            ],
+            "icon": "assets/icon.png",
+            "category": "public.app-category.education",
+            "artifactName": "Wind-Tunnel-${version}-mac-${arch}.${ext}"
+        },
+        "linux": {
+            "target": [
+                {
+                    "target": "AppImage",
+                    "arch": [
+                        "x64"
+                    ]
+                },
+                {
+                    "target": "deb",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "assets/icon.png",
+            "category": "Education",
+            "maintainer": "Matrix TSL <electronicdev@matrixtsl.com>",
+            "artifactName": "Wind-Tunnel-${version}-linux-${arch}.${ext}"
+        }
+    },
+    "author": {
+        "name": "Matrix TSL",
+        "email": "electronicdev@matrixtsl.com"
+    },
+    "homepage": "https://github.com/MuhammdAbdullah/matrix-wind-tunnel"
 }

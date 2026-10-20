@@ -1,0 +1,6 @@
+# Linux udev rules for the Matrix Wind Tunnel controller (VID 0x12BF).
+# Install: sudo cp 99-wind-tunnel.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+# Also add your user to the serial group: sudo usermod -aG dialout $USER  (log out/in afterwards)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="12bf", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="12bf", MODE="0666"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="12bf", MODE="0666"

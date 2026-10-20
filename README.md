@@ -15,6 +15,7 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
   - [Controller serial protocol](#controller-serial-protocol)
 - [Files written by the app](#files-written-by-the-app)
 - [Safety and Git boundary](#safety-and-git-boundary)
+- [Release notes](#release-notes)
 
 ## What the app does
 
@@ -88,6 +89,8 @@ The production build shows "Searching for controller…" and connects as soon as
 Values are the controller's raw floats; drag shape and tapping channel are metadata only and never enter a calculation.
 
 **Admin and safety.** Calibration writes and all firmware actions are checked in the main process (`admin.isUnlocked()`; calibration additionally requires no running sweep), not just in the UI. Calibration writes read the value back from the controller and only report `acknowledged: true` when the hardware confirms it.
+
+**Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
 **Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it. See `CLAUDE.md` for the full details and known caveats.
 
@@ -240,3 +243,18 @@ Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt
 Do not modify or reflash firmware during normal UI development. Firmware flashing and calibration writes are Admin-gated and need explicit confirmation. The bootstrap password must never be committed, embedded or logged. The bootloader's USB PID is not yet hardware-confirmed — see `CLAUDE.md` before relying on firmware updates.
 
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
+
+## Release notes
+
+### v0.1.2
+
+- **Safe state:** fan speed set to `0` and motor zeroed after every successful connect/reconnect and before the app quits (sweeps stopped first, 5 s cap).
+- Lockfile version synced with `package.json`.
+
+### v0.1.1
+
+- Fix: `main/` modules are now included in the packaged app.
+
+### v0.1.0
+
+- First release: Control + Calibrator, 8 experiments, CSV logging, Admin-gated calibration and bootloader firmware update; Windows, macOS and Linux builds.

@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('windTunnel', {
     getAuditLog: () => ipcRenderer.invoke('admin:getAuditLog'),
     requestElevation: () => ipcRenderer.invoke('admin:requestElevation'),
 
+    checkForUpdates: () => ipcRenderer.invoke('update:check'),
+    onUpdateStatus: (callback) => ipcRenderer.on('update:status', (_event, value) => callback(value)),
     onState: (callback) => ipcRenderer.on('state:update', (_event, value) => callback(value)),
     onAuditUpdate: (callback) => ipcRenderer.on('audit:update', (_event, value) => callback(value)),
     onLogEvent: (callback) => ipcRenderer.on('log:event', (_event, value) => callback(value)),

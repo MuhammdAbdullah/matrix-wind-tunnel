@@ -621,7 +621,7 @@ async function refreshLut() {
         const entries = await window.windTunnel.getLut();
         $('lut').innerHTML = entries.map((value, index) => `
             <label>Fan ${(index + 1) * 10}%
-                <input type="number" step="0.01" class="input input-bordered input-sm w-20" id="lutInput${index}" value="${value}">
+                <input type="number" step="0.01" class="input input-bordered input-sm w-20" id="lutInput${index}" value="${Number.isFinite(value) ? value : ''}">
                 <button class="btn btn-outline btn-xs lut-save" data-index="${index}">Save</button>
             </label>`).join('');
         document.querySelectorAll('.lut-save').forEach((button) => button.addEventListener('click', async () => {
@@ -829,7 +829,17 @@ window.windTunnel.onLogEvent((event) => {
     if (!state.sweepRunning) $('logStatePill').classList.add('pill-active', 'badge-pulse');
 });
 
-$('updateButton').addEventListener('click', () => log('No signed application update service configured yet'));
+// Download / restart prompts are native dialogs from the main process; this just shows status.
+function showUpdateStatus(status) {
+    const el = $('updateStatus');
+    el.hidden = false;
+    el.className = `update-status-message ${status.state === 'error' ? 'error' : status.state === 'current' || status.state === 'downloaded' ? 'success' : 'info'}`;
+    el.textContent = status.message;
+    $('updateButton').disabled = status.state === 'checking' || status.state === 'downloading';
+    if (status.state !== 'downloading') log(status.message, status.state === 'error' ? 'error' : 'info');
+}
+window.windTunnel.onUpdateStatus(showUpdateStatus);
+$('updateButton').addEventListener('click', () => window.windTunnel.checkForUpdates());
 
 setView_bindNav();
 window.windTunnel.onState(render);

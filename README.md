@@ -246,6 +246,11 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ## Release notes
 
+### v0.1.3
+
+- **In-app updates:** the Admin > Updates "Check For Updates" button now works (electron-updater via GitHub releases): check, "download?" prompt with progress, then "Restart Now" prompt. Updates only work in the installed app, not from source. Note: v0.1.1/v0.1.2 installs have the old non-functional button, so install v0.1.3 manually once.
+- Fix: velocity LUT inputs no longer log "NaN cannot be parsed" console warnings when the controller returns NaN entries (shown blank).
+
 ### v0.1.2
 
 - **Safe state:** fan speed set to `0` and motor zeroed after every successful connect/reconnect and before the app quits (sweeps stopped first, 5 s cap).

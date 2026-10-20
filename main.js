@@ -9,6 +9,7 @@ const sweeps = require('./main/sweeps');
 const calibration = require('./main/calibration');
 const firmware = require('./main/firmware');
 const logging = require('./main/logging');
+const updater = require('./main/updater');
 
 let mainWindow;
 
@@ -192,6 +193,10 @@ ipcMain.handle('admin:requestElevation', async () => {
 app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     createWindow();
+    updater.init(
+        () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
+        (status) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', status); }
+    );
     if (state.simulation) {
         state.port = 'Simulation';
         state.connected = true;

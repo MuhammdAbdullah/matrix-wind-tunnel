@@ -234,6 +234,27 @@ async function connectHardware(portPath, baudRate = 115200) {
     reconnectFailureStreak = 0;
     consecutiveReadFailures = 0;
     startConnectionMonitoring();
+    // Whatever the controller was doing before this session (or before a link drop) is stale.
+    await enterSafeState('system');
+    return state;
+}
+
+// Fan off and motor back to zero angle, sent in the transport's own format
+// (sendBinary picks the JSON/binary encoding for the verified API version).
+// Never throws: it runs on startup and during shutdown where nothing can recover from it.
+async function enterSafeState(source = 'system') {
+    state.fanSpeed = 0;
+    state.angle = 0;
+    if (!state.simulation && serialPort?.isOpen) {
+        for (const [command, payload] of [[CMD.FAN_SPEED, Buffer.from([0])], [CMD.ZERO_MOTOR, Buffer.alloc(0)]]) {
+            try { await sendBinary(command, payload, { source }); }
+            catch (error) {
+                console.log(`[serial] Safe-state ${command} failed: ${error.message}`);
+                state.diagnostics.errors += 1;
+            }
+        }
+    }
+    publish();
     return state;
 }
 
@@ -405,6 +426,7 @@ module.exports = {
     setFanSpeed,
     setAngle,
     setLeds,
+    enterSafeState,
     readSensorsOnce,
     reportReadOutcome,
     onUnexpectedDisconnect

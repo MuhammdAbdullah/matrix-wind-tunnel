@@ -203,6 +203,18 @@ app.whenReady().then(() => {
     sweeps.startSensorSampleTimer();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
+// Bring the tunnel to a safe condition (fan 0, motor at zero) before the process exits.
+let shutdownSafe = false;
+app.on('before-quit', (event) => {
+    if (shutdownSafe) return;
+    event.preventDefault();
+    shutdownSafe = true;
+    sweeps.stopSweep();
+    Promise.race([
+        serial.enterSafeState('system'),
+        new Promise((resolve) => setTimeout(resolve, 5000))
+    ]).catch(() => {}).finally(() => app.quit());
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 module.exports = { USB_VENDOR_ID: serial.USB_VENDOR_ID, USB_PRODUCT_ID: serial.USB_PRODUCT_ID };

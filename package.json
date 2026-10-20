@@ -8,7 +8,8 @@
         "start": "electron .",
         "simulate": "electron . --simulate",
         "dev": "electron . --dev",
-        "build-win": "electron-builder --win"
+        "build-win": "electron-builder --win",
+        "rebuild-hid": "electron-rebuild -f -w node-hid"
     },
     "devDependencies": {
         "electron": "^43.1.0",
@@ -16,6 +17,7 @@
     },
     "dependencies": {
         "electron-updater": "^6.6.2",
+        "node-hid": "^3.4.0",
         "serialport": "^12.0.0"
     },
     "build": {

@@ -3,6 +3,28 @@
 
 body { font-family: 'Inter', 'Segoe UI', sans-serif; }
 .hidden { display: none !important; }
+
+/* daisyUI's built-in dark theme sets --bc (base content / default text color) to a
+   muted light gray (~75% lightness), which Process Control V2 works around only for
+   its canvas chart text (forced to literal #ffffff/#1e293b in JS). Raise it here for
+   the whole app so every element reading var(--bc) -- nav links, the sidebar toggle
+   icon, labels, headings -- renders crisp white in dark mode, matching that intent. */
+[data-theme="dark"] { --bc: 100% 0 0; }
+
+/* btn-secondary (Zero sensors/motor, Start log, Refresh diagnostics, Calibrate
+   display, Check for updates) requested as #87538f in both themes, overriding
+   the vendored bundle's default hot-pink --s. --sc (secondary button text) is
+   raised to near-white to stay legible against this darker purple. */
+[data-theme="dark"], [data-theme="light"] {
+    --s: 52.38% .1093 322.2;
+    --sc: 97% .01 322.2;
+}
+
+/* The vendored matrix-ui.css bundle never generated an `.h-screen` utility (Process
+   Control V2 never used one), so `min-h-screen` on <body> lets the page grow taller
+   than the viewport and the whole window scrolls instead of just the control aside.
+   Pin the page to the viewport here so only `.control-aside` scrolls internally. */
+html, body { height: 100%; overflow: hidden; }
 .eyebrow { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.55; margin: 0 0 4px; }
 
 /* Utility classes the vendored matrix-ui.css bundle doesn't include (it only carries
@@ -10,47 +32,100 @@ body { font-family: 'Inter', 'Segoe UI', sans-serif; }
 #wt-header { min-height: 64px; }
 .logo-img { height: 1.75rem; width: auto; object-fit: contain; }
 .brand-title { color: oklch(var(--p)); }
-.select-compact { font-size: 12px; padding: 2px 8px; height: 1.6rem; min-height: 1.6rem; }
 .clock-nums { font-variant-numeric: tabular-nums; }
 .sidebar-width { width: 15rem; }
-.sidebar-transition { transition: transform 0.3s ease-in-out; }
+.sidebar-transition { transition: transform 0.3s ease-in-out, width 0.3s ease-in-out, min-width 0.3s ease-in-out, border-width 0.3s ease-in-out; }
+#sidebar.sidebar-closed { transform: translateX(-100%); }
+@media (min-width: 768px) {
+    /* On desktop the sidebar sits in normal flow (position: static), so hiding it must
+       collapse its width -- a transform alone would leave its layout space behind. */
+    #sidebar.sidebar-closed { transform: none; width: 0; min-width: 0; border-right-width: 0; }
+}
 #sidebarFoot { margin-top: auto; }
-.view-header { margin-bottom: 1.25rem; }
 .log-panel { margin-top: 16px; }
-.sidebar-link { display: block; padding: 10px 12px; border-radius: 8px; opacity: 0.75; text-decoration: none; }
-.sidebar-link:hover { background: oklch(var(--b3)); opacity: 1; }
-.sidebar-link.active { background: oklch(var(--p) / 0.18); color: oklch(var(--p)); opacity: 1; }
+.sidebar-link { display: block; padding: 10px 12px; border-radius: 8px; text-decoration: none; }
+.sidebar-link:hover { background: oklch(var(--b3)); }
+.sidebar-link.active { background: oklch(var(--p) / 0.18); color: oklch(var(--p)); }
 
-.chart-wrap { position: relative; width: 100%; height: 230px; }
+.chart-wrap { position: relative; width: 100%; flex: 1; min-height: 0; }
 .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
-.chart-panel { min-height: 300px; }
+.chart-panel { display: flex; flex-direction: column; min-height: 0; }
+.chart-panel .card-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* Only one chart is ever shown at a time (matches the legacy ShowHideCharts behavior --
+   one of Chart_XY/Chart_Historic is always off-panel). The hidden panel is removed from
+   the flex flow entirely so the remaining chart takes the full area with no leftover gap. */
+.chart-panel.chart-hidden { display: none; }
 
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
-.metric { background: oklch(var(--b2)); border: 1px solid oklch(var(--b3)); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.metric { background: oklch(var(--b2)); border: 1px solid oklch(var(--b3)); border-radius: 12px; padding: 10px 14px; min-width: 0; }
 .metric-name { opacity: 0.6; font-size: 12px; }
-.metric-value { font-size: clamp(22px, 3vw, 28px); font-weight: 600; margin: 8px 0 4px; }
-.metric-unit { opacity: 0.6; font-size: 12px; }
-.metric-accent { height: 3px; background: oklch(var(--a)); border-radius: 3px; margin-top: 13px; }
+.metric-value { font-size: clamp(20px, 3vw, 26px); font-weight: 600; margin-top: 4px; }
 
-.control-grid, .charts, .calibration-grid, .admin-grid { display: grid; gap: 16px; margin-bottom: 16px; }
-.control-grid { grid-template-columns: 1fr 1fr; }
-.charts { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+/* Control view: charts fill the center, sensors + controls form a right-hand aside
+   (stacked on top, full width, on narrow/mobile viewports). Mirrors Process Control V2. */
+#mainContent { min-height: 0; }
+.view { display: none; }
+.view:not(.hidden) { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
+
+.control-layout { gap: 16px; }
+.charts { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 0; min-height: 0; }
+.charts .chart-panel { flex: 1; min-height: 0; }
+.control-aside { display: flex; flex-direction: column; gap: 16px; flex-shrink: 0; order: 0; overflow-y: auto; }
+@media (min-width: 1024px) {
+    #controlView.control-layout { flex-direction: row; align-items: stretch; overflow: hidden; }
+    .control-aside { order: 9999; width: 340px; }
+}
+@media (min-width: 1280px) {
+    .control-aside { width: 380px; }
+}
+
+.calibration-grid, .admin-grid { display: grid; gap: 16px; margin-bottom: 16px; }
 .calibration-grid { grid-template-columns: 1fr 1fr; }
 .admin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.panel label, .card label { display: block; opacity: 0.75; margin: 10px 0; font-size: 12px; }
+
+/* Experiment Setup's "Sweeping (n)" pill: flashes while a sweep is running so the
+   live step count stays noticeable instead of blending into the rest of the panel. */
+@keyframes sweep-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 oklch(var(--p) / 0.55); }
+    50% { opacity: 0.55; box-shadow: 0 0 0 4px oklch(var(--p) / 0); }
+}
+.badge-pulse { animation: sweep-pulse 1s ease-in-out infinite; }
+
+/* Experiment Setup's "Sweeping (n)" / "Logging" pills: both stay out of sight
+   (zero width, invisible, but still in flow) until their activity is actually
+   running, then fade/slide in rather than being inserted with display:none. */
+.pill-fade { opacity: 0; max-width: 0; overflow: hidden; white-space: nowrap; transition: opacity 0.35s ease, max-width 0.35s ease; }
+.pill-fade.pill-active { opacity: 1; max-width: 160px; }
+.panel label, .card label { display: block; margin: 10px 0; font-size: 12px; }
 .card output { float: right; font-size: 13px; opacity: 1; }
 .card input[type=range] { display: block; width: 100%; margin-top: 10px; }
+.value-edit { float: right; font-size: 13px; opacity: 1; display: inline-flex; align-items: center; gap: 2px; }
+.value-input {
+    width: 3.5em;
+    text-align: right;
+    background: oklch(var(--b1));
+    border: 1px solid oklch(var(--b3));
+    border-radius: 4px;
+    color: inherit;
+    font: inherit;
+    padding: 2px 4px;
+    cursor: text;
+    -moz-appearance: textfield;
+}
+.value-input::-webkit-inner-spin-button,
+.value-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.value-input:hover { border-color: oklch(var(--p)); }
+.value-input:focus { outline: none; border-color: oklch(var(--p)); box-shadow: 0 0 0 2px oklch(var(--p) / 0.25); }
 .split { display: flex; gap: 14px; }
 .split label { flex: 1; }
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
-.cal-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid oklch(var(--b3)); padding: 8px 0; }
-.cal-row label { flex: 1; margin: 0; }
+.cal-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid oklch(var(--b3)); padding: 10px 0; }
+.cal-row label { flex: 1; display: flex; align-items: center; gap: 8px; margin: 0; }
 
-.lut { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
-.lut label { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: 0.85; }
-.lut input { width: 70px; }
+.lut { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px; }
+.lut label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 
 .details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 13px; }
 .details dt { opacity: 0.6; }
@@ -58,7 +133,13 @@ body { font-family: 'Inter', 'Segoe UI', sans-serif; }
 
 .diagnostics { max-height: 140px; overflow: auto; background: oklch(var(--b1)); border: 1px solid oklch(var(--b3)); padding: 8px; font-size: 10px; margin-top: 8px; }
 .chart-empty { opacity: 0.6; font-size: 12px; line-height: 1.5; padding: 60px 16px 0; text-align: center; }
-.admin-lock { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: oklch(var(--b2)); border: 1px solid oklch(var(--b3)); padding: 12px 15px; border-radius: 8px; margin-bottom: 16px; }
+
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid oklch(var(--b3)); margin-bottom: 18px; }
+.admin-tabs .tab-button { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 9px 14px; font-size: 13px; font-weight: 500; cursor: pointer; opacity: 0.65; color: inherit; white-space: nowrap; }
+.admin-tabs .tab-button:hover { opacity: 1; }
+.admin-tabs .tab-button.active { opacity: 1; border-bottom-color: oklch(var(--p)); color: oklch(var(--p)); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
 .section-intro { margin: 10px 0 20px; max-width: 700px; opacity: 0.8; line-height: 1.6; }
 .log { font: 12px Consolas, monospace; max-height: 160px; overflow: auto; }
 .log div { padding: 4px 0; border-bottom: 1px solid oklch(var(--b3) / 0.5); }
@@ -73,9 +154,8 @@ body { font-family: 'Inter', 'Segoe UI', sans-serif; }
 .update-status-message.error { background: oklch(var(--er) / 0.15); border-left-color: oklch(var(--er)); }
 
 @media (max-width: 1100px) {
-    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .control-grid, .charts, .calibration-grid, .admin-grid { grid-template-columns: 1fr; }
+    .calibration-grid, .admin-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
-    .admin-lock { flex-direction: column; align-items: flex-start; }
+    .metrics { grid-template-columns: 1fr; }
 }

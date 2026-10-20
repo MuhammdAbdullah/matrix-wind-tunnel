@@ -28,6 +28,11 @@ function createWindow() {
         }
     });
     mainWindow.setMenuBarVisibility(false);
+    mainWindow.webContents.on('before-input-event', (_event, input) => {
+        if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'i') {
+            mainWindow.webContents.toggleDevTools();
+        }
+    });
     setMainWindow(mainWindow);
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
@@ -38,6 +43,7 @@ ipcMain.handle('device:connectPort', (_event, portPath, baudRate = 115200) => se
 ipcMain.handle('device:disconnect', () => { serial.disconnect(); return state; });
 ipcMain.handle('device:setFanSpeed', (_event, value) => serial.setFanSpeed(value, { source: 'control' }));
 ipcMain.handle('device:setAngle', (_event, value) => serial.setAngle(value, { source: 'control' }));
+ipcMain.handle('device:setLeds', (_event, payload) => serial.setLeds({ ...payload, source: 'control' }));
 ipcMain.handle('device:zeroSensors', async () => {
     if (!state.simulation) await serial.sendBinary('F', Buffer.alloc(0), { source: 'control' });
     return { ok: true, message: 'Sensor zero command queued' };
@@ -58,8 +64,13 @@ ipcMain.handle('device:getDiagnostics', () => state.diagnostics);
 
 ipcMain.handle('experiment:list', () => ({ experiments: experiments.EXPERIMENTS, dragShapes: experiments.DRAG_SHAPES }));
 ipcMain.handle('experiment:select', (_event, experimentId) => {
+    // Switching experiments ends the current log -- the next sweep for the
+    // newly selected experiment must prompt for a fresh save location/name.
+    if (state.logging.active && state.logging.experimentId !== experimentId) logging.stopLog();
     state.experimentId = experiments.getById(experimentId).id;
     state.tapping = { channel: 1, increment: 1 };
+    state.manualAngle = { current: 0, increment: 5 };
+    state.aerofoilAoA = 0;
     publish();
     return { experimentId: state.experimentId };
 });
@@ -68,6 +79,38 @@ ipcMain.handle('experiment:setTapping', (_event, { channel, increment }) => {
     if (increment !== undefined) state.tapping.increment = Math.min(6, Math.max(0, Number(increment) || 0));
     publish();
     return state.tapping;
+});
+ipcMain.handle('experiment:setManualAngleIncrement', (_event, increment) => {
+    state.manualAngle.increment = Math.min(25, Math.max(0, Number(increment) || 0));
+    publish();
+    return state.manualAngle;
+});
+// Pressure Tapped Cylinder has no motor -- this just corrects/presets the operator-facing
+// "rotate cylinder to this angle" counter (e.g. to re-sync after a missed click, or to jump
+// straight to a specific angle), mirroring the legacy source's own self-wrapping counter.
+ipcMain.handle('experiment:setManualAngleCurrent', (_event, value) => {
+    const next = Math.round(Number(value) || 0);
+    state.manualAngle.current = Math.min(180, Math.max(-180, next));
+    publish();
+    return state.manualAngle;
+});
+// Aerofoil angle of attack is set by physically repositioning the aerofoil between full
+// 23-tapping sweeps -- this records what the operator set it to, for the CSV and for
+// grouping/comparing runs taken at different fixed angles (Worksheet 3's 0/5/12 degree runs).
+ipcMain.handle('experiment:setAerofoilAoA', (_event, value) => {
+    state.aerofoilAoA = Math.min(45, Math.max(-45, Number(value) || 0));
+    publish();
+    return state.aerofoilAoA;
+});
+ipcMain.handle('experiment:setFanSpeedIncrement', (_event, increment) => {
+    state.fanSpeedIncrement = Math.min(25, Math.max(0, Number(increment) || 0));
+    publish();
+    return state.fanSpeedIncrement;
+});
+ipcMain.handle('experiment:setStemRacingChartType', (_event, chartType) => {
+    state.stemRacingChartType = Math.min(2, Math.max(0, Number(chartType) || 0));
+    publish();
+    return state.stemRacingChartType;
 });
 ipcMain.handle('experiment:setCustomAxes', (_event, { xField, yField }) => {
     state.customAxes = { x: xField || state.customAxes.x, y: yField || state.customAxes.y };
@@ -80,15 +123,58 @@ ipcMain.handle('experiment:setDragShape', (_event, shape) => {
     return state.dragShape;
 });
 
-ipcMain.handle('sweep:startAngle', (_event, options = {}) => sweeps.startAngleSweep(options));
-ipcMain.handle('sweep:startFan', (_event, options = {}) => sweeps.startFanSweep(options));
+// Shared by log:start and the sweep starters below so every experiment type
+// (not just the no-sweep ones that only use the "Start log" button) is asked
+// where to save and what to name its CSV before any points are recorded.
+async function startLogWithDialog(experiment) {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        title: 'Save Experiment Log',
+        defaultPath: path.join(logging.getLogsFolder(), logging.defaultLogName(experiment)),
+        filters: [
+            { name: 'CSV Files', extensions: ['csv'] },
+            { name: 'All Files', extensions: ['*'] }
+        ]
+    });
+    if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+    return logging.startLog(experiment, result.filePath);
+}
+
+// Repeated sweeps of the *same* experiment share one CSV (a blank-line-
+// separated block per sweep) and only prompt for a save location once;
+// a different experiment always gets a fresh prompt (experiment:select
+// above already closed out the old file in that case).
+async function ensureLoggingForSweep(experiment) {
+    if (state.logging.active && state.logging.experimentId === experiment.id) {
+        logging.startSweepBlock();
+        return { ok: true };
+    }
+    if (state.logging.active) logging.stopLog();
+    const logResult = await startLogWithDialog(experiment);
+    if (logResult.canceled) return { ok: false, canceled: true, message: 'Save location cancelled; sweep not started' };
+    if (!logResult.ok) return { ok: false, message: 'Failed to start logging' };
+    return { ok: true };
+}
+
+ipcMain.handle('sweep:startAngle', async (_event, options = {}) => {
+    const experiment = experiments.getById(state.experimentId);
+    const ensured = await ensureLoggingForSweep(experiment);
+    if (!ensured.ok) return ensured;
+    return sweeps.startAngleSweep(options);
+});
+ipcMain.handle('sweep:startFan', async (_event, options = {}) => {
+    const experiment = experiments.getById(state.experimentId);
+    const ensured = await ensureLoggingForSweep(experiment);
+    if (!ensured.ok) return ensured;
+    return sweeps.startFanSweep(options);
+});
 ipcMain.handle('sweep:stop', () => sweeps.stopSweep());
 ipcMain.handle('sweep:status', () => sweeps.status());
 
-ipcMain.handle('log:start', () => logging.startLog(experiments.getById(state.experimentId)));
+ipcMain.handle('log:start', () => startLogWithDialog(experiments.getById(state.experimentId)));
 ipcMain.handle('log:stop', () => logging.stopLog());
 ipcMain.handle('log:status', () => logging.status());
 ipcMain.handle('log:setFolder', (_event, folder) => logging.setLogsFolder(folder));
+ipcMain.handle('experiment:logPoint', () => sweeps.logPoint());
 
 ipcMain.handle('calibration:setScaler', (_event, payload) => calibration.setScaler(payload));
 ipcMain.handle('calibration:getScalers', () => calibration.getScalers());
@@ -97,7 +183,15 @@ ipcMain.handle('calibration:getLut', () => calibration.getLut());
 ipcMain.handle('calibration:calibrateDisplay', () => calibration.calibrateDisplay());
 ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
 
-ipcMain.handle('admin:firmware', (_event, payload) => firmware.handleAction(payload));
+ipcMain.handle('admin:bootloaderCheckDevice', (_event, vid, pid) => firmware.checkDevice(vid, pid));
+ipcMain.handle('admin:bootloaderConnect', (_event, vid, pid) => firmware.connect(vid, pid));
+ipcMain.handle('admin:bootloaderDisconnect', () => firmware.disconnect());
+ipcMain.handle('admin:bootloaderLoadHex', (_event, hexPath) => firmware.loadHex(hexPath));
+ipcMain.handle('admin:bootloaderReadInfo', () => firmware.readInfo());
+ipcMain.handle('admin:bootloaderErase', () => firmware.erase());
+ipcMain.handle('admin:bootloaderProgram', () => firmware.program());
+ipcMain.handle('admin:bootloaderReadCrc', () => firmware.readCrc());
+ipcMain.handle('admin:bootloaderJumpToApp', () => firmware.jumpToApp());
 ipcMain.handle('admin:status', () => admin.status());
 ipcMain.handle('admin:verify', (_event, password) => admin.verify(password));
 ipcMain.handle('admin:setup', (_event, password) => admin.setup(password));

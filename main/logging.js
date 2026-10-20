@@ -28,19 +28,31 @@ function setLogsFolder(folder) {
     return { ok: true, logsFolder: folder };
 }
 
-function startLog(experiment) {
-    if (currentStream) stopLog();
-    const folder = getLogsFolder();
-    fs.mkdirSync(folder, { recursive: true });
+function defaultLogName(experiment) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    currentPath = path.join(folder, `WindTunnelLog_${timestamp}.csv`);
+    return `Wind Tunnel ${experiment.title} ${timestamp}.csv`;
+}
+
+function startLog(experiment, filePath) {
+    if (currentStream) stopLog();
+    const target = filePath || path.join(getLogsFolder(), defaultLogName(experiment));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    currentPath = target;
     currentStream = fs.createWriteStream(currentPath, { flags: 'a' });
     activeColumns = experiment.csvColumns;
     currentStream.write(`${activeColumns.join(',')}\n`);
     rowCount = 0;
-    state.logging = { active: true, path: currentPath, rowCount: 0 };
+    state.logging = { active: true, path: currentPath, rowCount: 0, experimentId: experiment.id };
     publish();
     return { ok: true, path: currentPath };
+}
+
+// Called when a new sweep starts on an already-open log for the same
+// experiment, so repeated sweeps land in one CSV as separate blocks instead
+// of either overwriting the file or re-prompting the save dialog each time.
+function startSweepBlock() {
+    if (!currentStream) return;
+    currentStream.write(`\n\n${activeColumns.join(',')}\n`);
 }
 
 function appendRow(rowObject) {
@@ -55,7 +67,7 @@ function appendRow(rowObject) {
 function stopLog() {
     if (currentStream) { currentStream.end(); currentStream = null; }
     const result = { ok: true, rowCount, path: currentPath };
-    state.logging = { active: false, path: null, rowCount: 0 };
+    state.logging = { active: false, path: null, rowCount: 0, experimentId: null };
     publish();
     return result;
 }
@@ -64,4 +76,4 @@ function status() {
     return { ...state.logging, logsFolder: getLogsFolder() };
 }
 
-module.exports = { startLog, appendRow, stopLog, status, setLogsFolder, getLogsFolder };
+module.exports = { startLog, startSweepBlock, appendRow, stopLog, status, setLogsFolder, getLogsFolder, defaultLogName };

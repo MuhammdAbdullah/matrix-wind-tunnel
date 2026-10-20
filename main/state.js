@@ -18,10 +18,47 @@ const state = {
     diagnostics: { tx: [], rx: [], retries: 0, errors: 0 },
     experimentId: 'sensorsVsTime',
     tapping: { channel: 1, increment: 1 },
+    manualAngle: { current: 0, increment: 5 },
+    // Pressure Tapped Aerofoil's angle of attack is set by physically repositioning the
+    // aerofoil in its holder between full 23-tapping sweeps (worksheet runs are 0deg/5deg/
+    // 12deg) -- unlike manualAngle it never auto-advances; it exists purely so the operator
+    // can record/tag which fixed angle the current sweep belongs to.
+    aerofoilAoA: 0,
+    // Cp = (P - P_inf) / (0.5 * rho * V^2) needs a free-stream reference pressure, P_inf,
+    // which the worksheets derive from the pitot-static ("Convert Pressure to Velocity")
+    // experiment's own logged readings. Keyed by the fan speed (%) active when each
+    // pitot-static point was logged; see sweeps.js's recordFreeStreamCalibration().
+    calibration: { pressureByFanSpeed: {} },
     dragShape: 'Flat Surface',
+    fanSpeedIncrement: 10,
+    stemRacingChartType: 1, // 0 = vs Time, 1 = vs Air Speed, 2 = vs Fan Speed
     customAxes: { x: 'time', y: 'lift' },
+    leds: {
+        animMode: 3, // 0 Off, 1 Static, 2 Strobe, 3 Match speed (1/20th), 4 Match speed (actual)
+        animColor: { r: 255, g: 40, b: 40 },
+        ambMode: 2, // 0 Off, 1 Static, 2 Fade, 3 Waves
+        ambColor: { r: 40, g: 107, b: 255 }
+    },
     sweep: { type: null, running: false, start: 0, end: 0, step: 0, delay: 5000, current: 0 },
-    logging: { active: false, path: null, rowCount: 0 },
+    // Bumped only when state.sensors is actually overwritten with a fresh reading --
+    // serial.js's readSensorsOnce() (hardware) and this module's own simulateSensors()
+    // (simulation) are the only two places sensors genuinely change. Every other publish
+    // (fan/angle slider commit, LED write, experiment/tapping/drag-shape change, a
+    // retry-exhausted setAngle/setFanSpeed error, etc.) still pushes state to the renderer,
+    // but without a changed sensorSampleSeq -- the renderer uses that to tell a genuine new
+    // sample from an unrelated publish, so it doesn't log a spurious duplicate chart point
+    // pairing already-updated controls with still-stale sensor data.
+    sensorSampleSeq: 0,
+    // Bumped only by sweeps.js's logPoint() -- the discrete "Log Point" action used by the
+    // manual-log experiments (pressureToVelocity, pressureTappedCylinder,
+    // pressureTappedAerofoil, dragCoefficient, custom). The legacy Flowcode source's single
+    // "Log" button adds exactly one chart point per click (plus a CSV row only if a log file
+    // is open) and then auto-advances fan speed/manual angle/tapping channel for the next
+    // click -- lastLoggedPoint/loggedPointSeq let the renderer mirror that discrete capture
+    // instead of inferring history points from the continuous sensor-sample timer.
+    loggedPointSeq: 0,
+    lastLoggedPoint: null,
+    logging: { active: false, path: null, rowCount: 0, experimentId: null },
     adminUnlocked: false
 };
 
@@ -46,6 +83,7 @@ function simulateSensors() {
         pressure: Number((fan * fan * 610).toFixed(2)),
         velocity: Number((fan * 22.8).toFixed(2))
     };
+    state.sensorSampleSeq += 1;
     return state.sensors;
 }
 

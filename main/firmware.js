@@ -1,23 +1,141 @@
+const bootloader = require('./bootloader');
+const admin = require('./admin');
 const { pushEvent } = require('./state');
-const serial = require('./serial');
 
-const REFUSAL_MESSAGE = 'The Wind Tunnel bootloader\'s USB identity and command protocol are not confirmed against real hardware or documentation in this codebase. Process Control V2\'s bootloader protocol (different framing, different USB identity) must not be substituted -- that risks bricking the controller. Use the existing standalone PC loader for firmware updates until the bootloader protocol is confirmed.';
-
-async function handleAction({ action }) {
-    pushEvent('firmware:progress', { stage: action, level: 'info', message: `Requested ${action}...` });
-
-    if (action === 'detect') {
-        const ports = await serial.listPorts();
-        pushEvent('firmware:progress', {
-            stage: 'detect',
-            level: 'warn',
-            message: `Found ${ports.length} serial device(s). Wind Tunnel bootloader USB identity is not documented in this codebase, so a bootloader device cannot be confirmed.`
-        });
-        return { ok: false, stage: 'detect', reason: 'protocol-unconfirmed', message: REFUSAL_MESSAGE, portsFound: ports.length };
-    }
-
-    pushEvent('firmware:progress', { stage: action, level: 'error', message: `${action} refused: bootloader protocol not confirmed.` });
-    return { ok: false, stage: action, reason: 'protocol-unconfirmed', message: REFUSAL_MESSAGE };
+function progress(stage, level, message) {
+    pushEvent('firmware:progress', { stage, level, message });
 }
 
-module.exports = { handleAction };
+function guard() {
+    if (!admin.isUnlocked()) return 'Admin session is locked. Unlock Admin before any firmware operation.';
+    return null;
+}
+
+function parseId(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function parseUsbIds(vid, pid) {
+    const vendorId = parseId(vid, bootloader.USB_VENDOR_ID);
+    const productId = parseId(pid, NaN);
+    if (!Number.isFinite(vendorId) || !Number.isFinite(productId)) return null;
+    return { vendorId, productId };
+}
+
+// Every entry point below is gated the same way `main/calibration.js` gates its writes: a locked
+// Admin session blocks the action before it ever touches the bootloader module, per ../AGENTS.md's
+// requirement that device detection, erase, programming, and verification each need password
+// confirmation. Process Control V2 has no such gate -- it is layered on top of the ported logic here.
+function guarded(stage, fn) {
+    return async (...args) => {
+        const blocked = guard();
+        if (blocked) {
+            progress(stage, 'error', blocked);
+            return { ok: false, stage, reason: 'admin-locked', message: blocked };
+        }
+        if (!bootloader.isAvailable()) {
+            const message = 'The node-hid module is not available in this build; firmware operations are disabled.';
+            progress(stage, 'error', message);
+            return { ok: false, stage, reason: 'hid-unavailable', message };
+        }
+        try {
+            return await fn(...args);
+        } catch (error) {
+            progress(stage, 'error', error.message);
+            return { ok: false, stage, reason: 'error', message: error.message };
+        }
+    };
+}
+
+const checkDevice = guarded('check-device', async (vid, pid) => {
+    const ids = parseUsbIds(vid, pid);
+    if (!ids) return { ok: false, stage: 'check-device', reason: 'missing-usb-id', message: 'Enter the bootloader\'s USB VID and PID before checking for the device.' };
+    const present = bootloader.checkDeviceAvailable(ids.vendorId, ids.productId);
+    return { ok: true, stage: 'check-device', present };
+});
+
+const connect = guarded('connect', async (vid, pid) => {
+    const ids = parseUsbIds(vid, pid);
+    if (!ids) {
+        const message = 'Enter the bootloader\'s USB VID and PID (read from Windows Device Manager while the controller is in bootloader mode) before connecting.';
+        progress('connect', 'error', message);
+        return { ok: false, stage: 'connect', reason: 'missing-usb-id', message };
+    }
+    progress('connect', 'info', 'Searching for the Wind Tunnel bootloader device...');
+    await bootloader.connect(ids.vendorId, ids.productId);
+    const message = 'Connected to the bootloader device.';
+    progress('connect', 'info', message);
+    return { ok: true, stage: 'connect', message };
+});
+
+async function disconnect() {
+    bootloader.disconnect();
+    progress('disconnect', 'info', 'Disconnected from the bootloader device.');
+    return { ok: true, stage: 'disconnect', message: 'Disconnected.' };
+}
+
+const loadHex = guarded('load-hex', async (hexPath) => {
+    if (!hexPath) return { ok: false, stage: 'load-hex', reason: 'no-file', message: 'Select a .hex file.' };
+    const result = bootloader.loadHexFile(hexPath);
+    const message = `${result.recordCount} hex records loaded.`;
+    progress('load-hex', 'info', message);
+    return { ok: true, stage: 'load-hex', message, recordCount: result.recordCount };
+});
+
+const readInfo = guarded('read-info', async () => {
+    progress('read-info', 'info', 'Reading bootloader info...');
+    const info = await bootloader.readInfo();
+    const message = `Bootloader firmware version ${info.majorVersion}.${info.minorVersion}`;
+    progress('read-info', 'info', message);
+    return { ok: true, stage: 'read-info', message, ...info };
+});
+
+const erase = guarded('erase', async () => {
+    progress('erase', 'warn', 'Erasing application flash. Do not disconnect the device...');
+    await bootloader.erase();
+    const message = 'Flash erase acknowledged by the device.';
+    progress('erase', 'info', message);
+    return { ok: true, stage: 'erase', message };
+});
+
+const program = guarded('program', async () => {
+    progress('program', 'info', 'Programming flash...');
+    await bootloader.program((sent, total) => {
+        progress('program', 'info', `Programmed ${sent}/${total} hex records`);
+    });
+    const message = 'Programming command sequence sent.';
+    progress('program', 'info', message);
+    return { ok: true, stage: 'program', message };
+});
+
+const readCrc = guarded('verify', async () => {
+    progress('verify', 'info', 'Requesting device CRC...');
+    const result = await bootloader.readCrc();
+    const message = result.matches
+        ? `Verification succeeded: device CRC 0x${result.deviceCrc.toString(16)} matches expected 0x${result.expectedCrc.toString(16)}.`
+        : `Verification FAILED: device CRC 0x${result.deviceCrc.toString(16)} does not match expected 0x${result.expectedCrc.toString(16)}.`;
+    progress('verify', result.matches ? 'info' : 'error', message);
+    return { ok: result.matches, stage: 'verify', message, ...result };
+});
+
+const jumpToApp = guarded('run', async () => {
+    progress('run', 'info', 'Commanding the device to exit bootloader and run the application...');
+    await bootloader.run();
+    const message = 'Run-application command sent. The device should restart into normal operation.';
+    progress('run', 'info', message);
+    return { ok: true, stage: 'run', message };
+});
+
+module.exports = {
+    checkDevice,
+    connect,
+    disconnect,
+    loadHex,
+    readInfo,
+    erase,
+    program,
+    readCrc,
+    jumpToApp
+};

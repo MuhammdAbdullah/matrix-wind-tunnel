@@ -2,7 +2,7 @@
 
 ## Scope
 
-This independent repository contains the new Windows Electron **Wind Tunnel** application. It combines Wind Tunnel Control and Wind Tunnel Calibrator in one app. The sibling `Firmware`, `Matrix Wind Tunnel 2.2`, and `Process Control V2` folders are references only and are never included in this repository’s commits or pushes.
+This independent repository contains the new Windows Electron **Wind Tunnel** application. It combines Wind Tunnel Control and Wind Tunnel Calibrator in one app. All development work happens here, in `Matrix Wind Tunnel App/`, only. The sibling `Firmware`, `Matrix Wind Tunnel 2.2`, and `Process Control V2` folders are **read-only references** — consult them for protocol, behavior, and UI-pattern guidance, but never edit, add, or remove files inside them, and they are never included in this repository's commits or pushes.
 
 ## Hardware and connection
 

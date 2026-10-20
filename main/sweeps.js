@@ -4,14 +4,6 @@ const logging = require('./logging');
 const experiments = require('./experiments');
 
 const DEFAULT_SAMPLE_TIME_MS = 1000;
-// Standard sea-level air density (kg/m^3), matching the value used throughout the April 2023
-// "Wind Tunnel - Test results" report's own Cp/Cd calculations (the worksheet text rounds to
-// 1.20; the verified test data uses 1.225/1.223 -- use the more precise, test-verified value).
-const AIR_DENSITY = 1.225;
-// Readings are matched to a calibration point within this many percentage points of fan speed
-// (the pitot-static worksheet is run in 10% steps, so an exact or near-exact match is normal;
-// this just tolerates small operator rounding, e.g. 49% vs a 50% calibration point).
-const FREE_STREAM_MATCH_TOLERANCE = 3;
 
 let sensorTimer = null;
 let sweepTimer = null;
@@ -46,49 +38,16 @@ function startSensorSampleTimer(sampleTimeMs = DEFAULT_SAMPLE_TIME_MS) {
     }, sampleTimeMs);
 }
 
-// Finds the pitot-static free-stream pressure logged nearest the given fan speed (see
-// recordFreeStreamCalibration()). Returns null if no calibration point is close enough --
-// callers must not silently treat "no calibration yet" as P_inf = 0.
-function lookupFreeStreamPressure(fanSpeed) {
-    const table = state.calibration.pressureByFanSpeed;
-    const keys = Object.keys(table).map(Number);
-    if (!keys.length) return null;
-    const nearest = keys.reduce((best, key) => (Math.abs(key - fanSpeed) < Math.abs(best - fanSpeed) ? key : best));
-    if (Math.abs(nearest - fanSpeed) > FREE_STREAM_MATCH_TOLERANCE) return null;
-    return table[nearest];
-}
-
-// Cp = (P - P_inf) / (0.5 * rho * V^2), per Worksheets 2 and 3. Returns { cp, freeStreamPressure }
-// with cp: null when there's no usable calibration point or the tunnel isn't moving yet (V=0
-// would otherwise divide by zero) -- the UI must show this as "uncalibrated", not a false 0.
-function computeCp(pressure, fanSpeed, velocity) {
-    const freeStreamPressure = lookupFreeStreamPressure(fanSpeed);
-    if (freeStreamPressure === null || !velocity) return { cp: null, freeStreamPressure: null };
-    const cp = (pressure - freeStreamPressure) / (0.5 * AIR_DENSITY * velocity * velocity);
-    return { cp: Number(cp.toFixed(4)), freeStreamPressure };
-}
-
-// The pitot-static worksheet ("Convert Pressure to Velocity") IS the free-stream calibration
-// run: each logged point records the undisturbed tunnel pressure at a given fan speed, which
-// Worksheets 2/3 then reuse as P_inf. Keyed by the fan speed active at log time so Pressure
-// Tapped Cylinder/Aerofoil readings taken at a matching fan speed can look it back up.
-function recordFreeStreamCalibration() {
-    state.calibration.pressureByFanSpeed[state.fanSpeed] = state.sensors.pressure;
-}
-
 function buildRow(experiment) {
     // Pressure Tapped Aerofoil splits its single pressure reading across two chart/CSV
     // traces by tapping channel (top surface 1-12, bottom surface 13-23; channel 1 is the
     // shared reference point and belongs to both) -- mirrors the legacy source's two
     // Chart_XY.AddPoint() calls for that experiment.
     const channel = state.tapping.channel;
-    const { cp, freeStreamPressure } = computeCp(state.sensors.pressure, state.fanSpeed, state.sensors.velocity);
     const row = {
         time: new Date().toISOString(),
         fanSpeed: state.fanSpeed,
         angle: state.angle,
-        manualAngle: state.manualAngle.current,
-        aerofoilAoA: state.aerofoilAoA,
         lift: state.sensors.lift,
         drag: state.sensors.drag,
         pressure: state.sensors.pressure,
@@ -96,16 +55,15 @@ function buildRow(experiment) {
         pressureBottom: channel === 1 || channel > 12 ? state.sensors.pressure : null,
         velocity: state.sensors.velocity,
         tappingChannel: channel,
-        dragShape: state.dragShape,
-        freeStreamPressure,
-        cp,
-        cpTop: channel <= 12 ? cp : null,
-        cpBottom: channel === 1 || channel > 12 ? cp : null
+        aerofoilAngle: state.aerofoilAngle,
+        dragShape: state.dragShape
     };
+    if (experiment.id === 'pressureTappedCylinder') {
+        // The hardware gauge runs -180..180; the cylinder is plotted/logged as one continuous 0..360 sweep.
+        row.angle = ((state.angle % 360) + 360) % 360;
+    }
     if (experiment.id === 'pressureTappedAerofoil') {
-        const { x, surface } = experiments.chordPositionFor(channel);
-        row.chordX = x;
-        row.surface = surface;
+        row.tappingX = experiments.tappingXFor(channel);
     }
     if (experiment.id === 'custom') {
         row.customX = row[state.customAxes.x];
@@ -124,9 +82,8 @@ async function logPoint() {
     if (state.logging.active) logging.appendRow(row);
     state.lastLoggedPoint = row;
     state.loggedPointSeq += 1;
-    if (experiment.id === 'pressureToVelocity') recordFreeStreamCalibration();
     advanceTapping(experiment);
-    advanceManualAngle(experiment);
+    await advanceManualAngle(experiment);
     publish();
     await advanceFanSpeedOnLog(experiment);
     publish();
@@ -139,17 +96,19 @@ function advanceTapping(experiment) {
     state.tapping.channel = next > 23 ? 1 : next;
 }
 
-// Pressure Tapped Cylinder never drives the motor -- the operator hand-rotates it and this
-// counter just tracks the equivalent angle, wrapping +180 -> -180, once per logged point.
-function advanceManualAngle(experiment) {
+// Pressure Tapped Cylinder uses the same angle gauge as the motor: each logged point bumps it by
+// "Increment Angle" (wrapping +180 -> -180), which in the legacy source's gauge-change handler
+// sends SetMotorAngle -- so this drives the real hardware angle, like advanceFanSpeedOnLog.
+async function advanceManualAngle(experiment) {
     if (!experiment.fields.includes('manualAngle') || !state.manualAngle.increment) return;
-    const next = state.manualAngle.current + state.manualAngle.increment;
-    state.manualAngle.current = next > 180 ? -180 : next;
+    const next = state.angle + state.manualAngle.increment;
+    // Past +180 the gauge continues from -180 (same physical position), so the 0..360 plot stays continuous.
+    await serial.setAngle(next > 180 ? next - 360 : next, { source: 'control' });
 }
 
 // Drag Coefficient has no sweep switch in the legacy source -- the operator sets fan speed,
 // clicks Log, and the gauge itself auto-bumps by "Increment Speed" (wrapping 100 -> 0) as a
-// convenience for the next click. Unlike manualAngle this drives the real hardware value.
+// convenience for the next click. Same hardware-driven behaviour as advanceManualAngle.
 async function advanceFanSpeedOnLog(experiment) {
     if (!experiment.fields.includes('fanSpeedIncrement') || !state.fanSpeedIncrement) return;
     const next = state.fanSpeed + state.fanSpeedIncrement;

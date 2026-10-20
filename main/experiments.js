@@ -1,17 +1,11 @@
 // Raw passthrough only: lift/drag/pressure/velocity are the hardware's floats as-is.
 // The Flowcode source has no coefficient formula (no rho/area/0.5*v^2 anywhere) and no
 // per-drag-shape correction factor -- "dragShape" and "tapping" fields below are metadata
-// written to the CSV/UI label only, never consumed in a calculation. The one documented
-// exception the legacy source's worksheets actually require: Pressure Tapped Cylinder and
-// Pressure Tapped Aerofoil derive a pressure coefficient, Cp = (P - P_inf) / (0.5*rho*V^2),
-// in sweeps.js's buildRow(), using a free-stream reference pressure P_inf captured from the
-// pitot-static ("Convert Pressure to Velocity") experiment's own logged points -- this mirrors
-// CP0704-Aerodynamics.pdf Worksheets 2 and 3, which define Cp this way and source P_inf "from
-// the results of the first worksheet".
-// "manualAngle" is not the hardware's motor angle: in the legacy source, Pressure Tapped
-// Cylinder never drives the motor at all -- the operator hand-rotates the cylinder on its
-// notched mechanism and the app just tracks a self-wrapping counter (+/-180, wraps to -180)
-// that advances once per logged point, purely for the CSV/chart X label.
+// written to the CSV/UI label only, never consumed in a calculation. Pressure Tapped Cylinder
+// and Pressure Tapped Aerofoil likewise plot the raw pressure (Pa) -- the legacy source computes
+// no pressure coefficient and needs no pitot-static calibration for either.
+// "manualAngle" (Cylinder) is just the Increment Angle setting: the legacy source reads the
+// one shared angle gauge, logs it, and bumps the gauge by that increment (wrap +180 -> -180).
 // Per the legacy source's own per-experiment property-visibility switch (confirmed at two
 // independent places: the "DragShapeCat" property-folder visibility toggle and the CSV
 // header-writing switch), the drag-shape selector belongs ONLY to Drag Coefficient -- Lift
@@ -32,17 +26,12 @@
 // is the one no-sweep experiment that stays continuous.
 const DRAG_SHAPES = ['Flat Surface', 'Cone', 'Tear Drop', 'Rough Ball', 'Semi Sphere', 'Smooth Ball'];
 
-// Worksheet 3's fixed tapping-to-chord-position table (CP0704-Aerodynamics.pdf, "Worksheet 3
-// - Flow Patterns Around an Aerofoil"): tapping 1 is the leading-edge reference (x=0, belongs
-// to both surfaces, matching buildRow()'s existing pressureTop/pressureBottom split); tappings
-// 2-12 run along the upper surface and 13-23 along the lower surface, both sharing the same
-// fractional-chord sequence.
-const CHORD_FRACTIONS = [0, 0.01, 0.03, 0.06, 0.12, 0.18, 0.30, 0.40, 0.51, 0.60, 0.70, 0.80];
-function chordPositionFor(channel) {
+// Legacy OnLogButtonClick Exercise 2 X value: channel 1 plots at 0 on both traces, upper
+// channels 2-12 at channel-1, lower channels 13-23 at channel-12.
+function tappingXFor(channel) {
     const ch = Math.min(23, Math.max(1, Number(channel) || 1));
-    if (ch === 1) return { x: 0, surface: 'both' };
-    if (ch <= 12) return { x: CHORD_FRACTIONS[ch - 1], surface: 'upper' };
-    return { x: CHORD_FRACTIONS[ch - 12], surface: 'lower' };
+    if (ch === 1) return 0;
+    return ch <= 12 ? ch - 1 : ch - 12;
 }
 
 const EXPERIMENTS = [
@@ -63,26 +52,25 @@ const EXPERIMENTS = [
         title: 'Pressure Tapped Cylinder',
         sweepType: null,
         manualLog: true,
-        liveTraces: ['cp'],
-        secondaryTraces: ['pressure'],
+        liveTraces: ['pressure'],
         fields: ['manualAngle'],
-        csvColumns: ['time', 'fanSpeed', 'manualAngle', 'pressure', 'freeStreamPressure', 'velocity', 'cp'],
-        xField: 'manualAngle',
+        csvColumns: ['time', 'fanSpeed', 'angle', 'pressure'],
+        xField: 'angle',
         xLabel: 'Angle of Attack (°)',
-        yLabel: 'Pressure Coefficient (Cp)'
+        yLabel: 'Pressure (Pa)'
     },
     {
         id: 'pressureTappedAerofoil',
         title: 'Pressure Tapped Aerofoil',
         sweepType: null,
         manualLog: true,
-        liveTraces: ['cpTop', 'cpBottom'],
-        secondaryTraces: [],
-        fields: ['tapping', 'aerofoilAoA'],
-        csvColumns: ['time', 'fanSpeed', 'aerofoilAoA', 'tappingChannel', 'chordX', 'surface', 'pressure', 'freeStreamPressure', 'velocity', 'cp'],
-        xField: 'chordX',
-        xLabel: 'Fractional Chord Position (x)',
-        yLabel: 'Pressure Coefficient (Cp)'
+        liveTraces: ['pressureTop', 'pressureBottom'],
+        fields: ['tapping'],
+        csvColumns: ['time', 'fanSpeed', 'aerofoilAngle', 'tappingChannel', 'pressure'],
+        // Legacy plots against tapping position along each surface (see tappingXFor), not chord fraction.
+        xField: 'tappingX',
+        xLabel: 'Tapping Position',
+        yLabel: 'Pressure (Pa)'
     },
     {
         id: 'liftCoefficient',
@@ -151,4 +139,4 @@ function getById(id) {
     return EXPERIMENTS.find((experiment) => experiment.id === id) || EXPERIMENTS[0];
 }
 
-module.exports = { EXPERIMENTS, DRAG_SHAPES, SWEEP_DEFAULTS, CHORD_FRACTIONS, chordPositionFor, getById };
+module.exports = { EXPERIMENTS, DRAG_SHAPES, SWEEP_DEFAULTS, tappingXFor, getById };

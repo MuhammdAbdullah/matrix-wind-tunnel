@@ -1,17 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const format = (value, digits = 2) => Number(value || 0).toFixed(digits);
 
-// Mirrors main/experiments.js's CHORD_FRACTIONS/chordPositionFor (Worksheet 3's fixed
-// tapping-to-chord-position table) for the renderer-only "x = ..." readout next to the
-// Tapping Channel input -- kept in sync with the main-process copy used for the logged row.
-const CHORD_FRACTIONS = [0, 0.01, 0.03, 0.06, 0.12, 0.18, 0.30, 0.40, 0.51, 0.60, 0.70, 0.80];
-function chordPositionFor(channel) {
-    const ch = Math.min(23, Math.max(1, Number(channel) || 1));
-    if (ch === 1) return { x: 0, surface: 'both' };
-    if (ch <= 12) return { x: CHORD_FRACTIONS[ch - 1], surface: 'upper' };
-    return { x: CHORD_FRACTIONS[ch - 12], surface: 'lower' };
-}
-
 const CUSTOM_AXIS_FIELDS = ['time', 'fanSpeed', 'angle', 'lift', 'drag', 'pressure', 'velocity'];
 const CUSTOM_AXIS_LABELS = { time: 'Time', fanSpeed: 'Fan Speed', angle: 'Angle', lift: 'Lift', drag: 'Drag', pressure: 'Pressure', velocity: 'Velocity' };
 const SWEEP_FIELD_DEFAULTS = {
@@ -71,25 +60,31 @@ function sweepXValue(experiment, value, pointIndex) {
     return pointIndex;
 }
 
-// Groups manualLog history points into separate chart "runs" the same way sweeps already do
-// (see MAX_SWEEP_TRACES/buildSweepRunLabel above), so repeating a Cylinder angle sweep at a
-// different fan speed, or an Aerofoil chord sweep at a different angle of attack (Worksheets
-// 2 and 3's "Challenge" exercises), overlays as distinct comparable traces instead of one
-// run's points silently mixing into the next.
-function manualLogRunKey(experiment, point) {
-    if (experiment.id === 'pressureTappedCylinder') return `${point.fanSpeed}% Fan`;
-    if (experiment.id === 'pressureTappedAerofoil') return `${point.aerofoilAoA}° AoA @ ${point.fanSpeed}% Fan`;
-    return null;
+// Splits manualLog history into separate chart "runs", the way sweeps already get one run per
+// sweep (see MAX_SWEEP_TRACES/buildSweepRunLabel above). A new run starts when the operator
+// redoes the experiment -- the tapping channel / cylinder angle wraps back to the start, or the
+// fan speed (or the aerofoil's angle) changes -- so the second pass gets its own colour instead
+// of a straight line joining the end of the last run back to the start of this one.
+function startsNewManualRun(experiment, prev, point) {
+    if (!prev) return true;
+    if (point.fanSpeed !== prev.fanSpeed) return true;
+    if (experiment.id === 'pressureTappedAerofoil') return point.tappingChannel < prev.tappingChannel || point.aerofoilAngle !== prev.aerofoilAngle;
+    if (experiment.id === 'pressureTappedCylinder') return point.angle < prev.angle;
+    return false;
+}
+
+function manualRunLabel(experiment, point, number) {
+    const base = `Run ${number}: ${point.fanSpeed}% fan`;
+    return experiment.id === 'pressureTappedAerofoil' ? `${base}, ${point.aerofoilAngle}°` : base;
 }
 
 function groupManualLogHistory(experiment, points) {
     const runs = [];
-    const byLabel = new Map();
+    let prev = null;
     points.forEach((point) => {
-        const label = manualLogRunKey(experiment, point);
-        let run = byLabel.get(label);
-        if (!run) { run = { label, points: [] }; byLabel.set(label, run); runs.push(run); }
-        run.points.push({ x: point[experiment.xField], sensors: point });
+        if (startsNewManualRun(experiment, prev, point)) runs.push({ label: manualRunLabel(experiment, point, runs.length + 1), points: [] });
+        runs[runs.length - 1].points.push({ x: point[experiment.xField], sensors: point });
+        prev = point;
     });
     return runs.length > MAX_SWEEP_TRACES ? runs.slice(-MAX_SWEEP_TRACES) : runs;
 }
@@ -143,7 +138,7 @@ function updateChartVisibility(experiment) {
     $('historyChartPanel').classList.toggle('chart-hidden', showLive);
 }
 
-const PRESSURE_DIST_EXPERIMENTS = ['pressureTappedCylinder', 'pressureTappedAerofoil'];
+const RUN_GROUPED_EXPERIMENTS = ['pressureTappedCylinder', 'pressureTappedAerofoil'];
 
 function renderCharts() {
     if (!state.currentExperiment) return;
@@ -157,39 +152,18 @@ function renderCharts() {
         $('historyCount').textContent = pointCount > 0 ? `${pointCount} pts across ${state.historyRuns.length} sweep(s)` : 'No logged points yet';
         return;
     }
-    if (PRESSURE_DIST_EXPERIMENTS.includes(state.currentExperiment.id)) {
+    if (RUN_GROUPED_EXPERIMENTS.includes(state.currentExperiment.id)) {
         const historySeries = state.experimentHistory.slice(-2000);
         const runs = groupManualLogHistory(state.currentExperiment, historySeries);
         WindTunnelCharts.updateHistoryRuns(runs, experiment);
         const pointCount = runs.reduce((sum, run) => sum + run.points.length, 0);
         $('historyCount').textContent = pointCount > 0 ? `${pointCount} pts across ${runs.length} run(s)` : 'No logged points yet';
-        renderPressureDistribution(state.currentExperiment, runs);
         return;
     }
     const historySeries = state.experimentHistory.slice(-300);
     WindTunnelCharts.updateHistory(historySeries, experiment, state.customAxes);
     $('historyCount').textContent = historySeries.length > 0 ? `${historySeries.length} pts` : 'No logged points yet';
 }
-
-// Keeps the "which run am I looking at" dropdown in sync with the runs currently grouped
-// out of experimentHistory, defaulting to the most recently started run.
-let selectedPressureDistRun = null;
-function renderPressureDistribution(experiment, runs) {
-    const select = $('pressureDistRunSelect');
-    const labels = runs.map((run) => run.label);
-    if (select.dataset.labels !== labels.join('|')) {
-        select.dataset.labels = labels.join('|');
-        select.innerHTML = labels.map((label) => `<option value="${label}">${label}</option>`).join('');
-        if (!labels.includes(selectedPressureDistRun)) selectedPressureDistRun = labels[labels.length - 1] || null;
-    }
-    select.value = selectedPressureDistRun || '';
-    const run = runs.find((candidate) => candidate.label === selectedPressureDistRun) || runs[runs.length - 1];
-    WindTunnelCharts.drawPressureDistribution($('pressureDistChart'), experiment, run ? run.points : []);
-}
-$('pressureDistRunSelect').addEventListener('change', (event) => {
-    selectedPressureDistRun = event.target.value;
-    renderCharts();
-});
 
 const isMobileViewport = () => window.matchMedia('(max-width: 767px)').matches;
 
@@ -220,11 +194,6 @@ function applyExperiment(experiment) {
     const fields = experiment.fields || [];
     $('tappingFields').classList.toggle('hidden', !fields.includes('tapping'));
     $('manualAngleField').classList.toggle('hidden', !fields.includes('manualAngle'));
-    $('manualAngleCurrentFieldWrap').classList.toggle('hidden', !fields.includes('manualAngle'));
-    $('aerofoilAoAField').classList.toggle('hidden', !fields.includes('aerofoilAoA'));
-    $('cpReadout').classList.toggle('hidden', !PRESSURE_DIST_EXPERIMENTS.includes(experiment.id));
-    $('pressureDistPanel').classList.toggle('hidden', !PRESSURE_DIST_EXPERIMENTS.includes(experiment.id));
-    selectedPressureDistRun = null;
     $('dragShapeField').classList.toggle('hidden', !fields.includes('dragShape'));
     $('fanSpeedIncrementField').classList.toggle('hidden', !fields.includes('fanSpeedIncrement'));
     $('customAxesFields').classList.toggle('hidden', !fields.includes('customAxes'));
@@ -294,34 +263,19 @@ function render(value) {
     $('adminRetries').textContent = value.diagnostics.retries;
     $('adminErrors').textContent = value.diagnostics.errors;
 
-    $('fanSlider').value = value.fanSpeed;
-    $('angleSlider').value = value.angle;
+    // Don't overwrite a slider the operator is mid-drag on: main only learns the new value on
+    // release ('change'), so every sensor-tick publish during the drag carries the old value
+    // and would snap the thumb back.
+    if (!draggingSliders.has('fanSlider')) $('fanSlider').value = value.fanSpeed;
+    if (!draggingSliders.has('angleSlider')) $('angleSlider').value = value.angle;
     if (document.activeElement !== $('fanValue')) $('fanValue').value = value.fanSpeed;
     if (document.activeElement !== $('angleValue')) $('angleValue').value = value.angle;
     renderMetrics(value.sensors, value.connected);
 
-    // Pressure Tapped Cylinder's hand-rotated dial: no motor moves it, so this readout is the
-    // only visible feedback that the counter actually advanced after each Log Point click.
-    $('manualAngleCurrentSlider').value = value.manualAngle.current;
-    if (document.activeElement !== $('manualAngleCurrentValue')) $('manualAngleCurrentValue').value = value.manualAngle.current;
-    if (document.activeElement !== $('aerofoilAoAInput')) $('aerofoilAoAInput').value = value.aerofoilAoA;
-
-    if (value.experimentId === 'pressureTappedAerofoil' && document.activeElement !== $('tappingChannel')) {
-        const { x, surface } = chordPositionFor(value.tapping.channel);
-        const surfaceLabel = surface === 'both' ? 'leading edge, both surfaces' : `${surface} surface`;
-        $('tappingChordReadout').textContent = `x = ${x.toFixed(2)} (${surfaceLabel})`;
-    }
-
-    if (PRESSURE_DIST_EXPERIMENTS.includes(value.experimentId)) {
-        const point = value.lastLoggedPoint;
-        if (point && point.cp !== null && point.cp !== undefined) {
-            $('cpReadout').innerHTML = `Last point: Cp = <strong>${point.cp.toFixed(3)}</strong> (P&infin; = ${format(point.freeStreamPressure, 1)} Pa, from pitot-static calibration)`;
-        } else if (point) {
-            $('cpReadout').innerHTML = `<span class="log-warning">No Cp — no pitot-static (Convert Pressure to Velocity) calibration logged near ${value.fanSpeed}% fan speed yet.</span>`;
-        } else {
-            $('cpReadout').textContent = 'Log a point to compute Cp.';
-        }
-    }
+    // Log Point auto-advances the tapping channel by the increment in main (legacy
+    // OnLogButtonClick), so show the channel/increment main actually holds.
+    if (document.activeElement !== $('tappingChannel')) $('tappingChannel').value = value.tapping.channel;
+    if (document.activeElement !== $('aerofoilAngle')) $('aerofoilAngle').value = value.aerofoilAngle;
 
     const rgbToHex = ({ r, g, b }) => `#${[r, g, b].map((n) => Math.round(n).toString(16).padStart(2, '0')).join('')}`;
     if (document.activeElement !== $('ledAnimMode')) $('ledAnimMode').value = value.leds.animMode;
@@ -349,7 +303,9 @@ function render(value) {
     // setAngle/setFanSpeed error, etc.) still reaches render() but must not log another
     // chart point off the same still-stale sensor values. See state.js's sensorSampleSeq
     // comment. Compared once per render() call, not per branch below.
-    const freshSample = value.sensorSampleSeq !== state.lastSensorSampleSeq;
+    // sensorSampleSeq === 0 means no reading has arrived yet (sensors are still the 0 defaults),
+    // so the very first publish after launch must not be charted as a real point.
+    const freshSample = value.sensorSampleSeq > 0 && value.sensorSampleSeq !== state.lastSensorSampleSeq;
     if (value.connected && state.currentExperiment) {
         if (freshSample) state.liveSamples.push({ ...value.sensors, fanSpeed: value.fanSpeed, angle: value.angle, time: Date.now() });
         if (state.currentExperiment.sweepType) {
@@ -437,6 +393,20 @@ $('forceDisconnect')?.addEventListener('click', async () => {
     log('Controller disconnected from Admin; fan command set to zero, USB auto-scan continues');
 });
 
+// Track sliders being dragged (pointer held, or keyboard-focused until 'change' fires) so
+// render() leaves them alone until the new value has been committed to main.
+const draggingSliders = new Set();
+['fanSlider', 'angleSlider'].forEach((id) => {
+    const slider = $(id);
+    slider.addEventListener('pointerdown', () => draggingSliders.add(id));
+    slider.addEventListener('pointerup', () => setTimeout(() => draggingSliders.delete(id), 300));
+    slider.addEventListener('pointercancel', () => draggingSliders.delete(id));
+    slider.addEventListener('blur', () => draggingSliders.delete(id));
+});
+// Live-update the numeric box while dragging.
+$('fanSlider').addEventListener('input', (event) => { $('fanValue').value = event.target.value; });
+$('angleSlider').addEventListener('input', (event) => { $('angleValue').value = event.target.value; });
+
 $('fanSlider').addEventListener('change', async (event) => { await window.windTunnel.setFanSpeed(event.target.value); log(`Fan speed set to ${event.target.value}%`); });
 $('angleSlider').addEventListener('change', async (event) => { await window.windTunnel.setAngle(event.target.value); log(`Motor angle set to ${event.target.value}°`); });
 
@@ -484,30 +454,14 @@ $('experimentSelect').addEventListener('change', async (event) => {
     await window.windTunnel.selectExperiment(event.target.value);
     applyExperiment(state.experiments.find((experiment) => experiment.id === event.target.value));
 });
-$('tappingChannel').addEventListener('change', (event) => window.windTunnel.setTapping(Number(event.target.value), Number($('tappingIncrement').value)));
-$('tappingIncrement').addEventListener('change', (event) => window.windTunnel.setTapping(Number($('tappingChannel').value), Number(event.target.value)));
-$('manualAngleIncrementSelect').addEventListener('change', (event) => window.windTunnel.setManualAngleIncrement(Number(event.target.value)));
-$('manualAngleCurrentSlider').addEventListener('change', async (event) => { await window.windTunnel.setManualAngleCurrent(event.target.value); log(`Cylinder angle set to ${event.target.value}°`); });
-$('manualAngleCurrentValue').addEventListener('change', async (event) => {
-    const clamped = Math.min(180, Math.max(-180, Math.round(Number(event.target.value) || 0)));
-    event.target.value = clamped;
-    $('manualAngleCurrentSlider').value = clamped;
-    await window.windTunnel.setManualAngleCurrent(clamped);
-    log(`Cylinder angle set to ${clamped}°`);
-});
-$('manualAngleCurrentValue').addEventListener('keydown', (event) => { if (event.key === 'Enter') event.target.blur(); });
-$('aerofoilAoAInput').addEventListener('change', async (event) => {
+$('tappingChannel').addEventListener('change', (event) => window.windTunnel.setTapping(Number(event.target.value)));
+$('aerofoilAngle').addEventListener('change', async (event) => {
     const clamped = Math.min(45, Math.max(-45, Math.round(Number(event.target.value) || 0)));
     event.target.value = clamped;
-    await window.windTunnel.setAerofoilAoA(clamped);
-    log(`Aerofoil angle of attack set to ${clamped}° (reposition the aerofoil to match)`);
+    await window.windTunnel.setAerofoilAngle(clamped);
+    log(`Aerofoil angle set to ${clamped}°`);
 });
-$('aerofoilAoAInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') event.target.blur(); });
-$('tappingChannel').addEventListener('input', (event) => {
-    const { x, surface } = chordPositionFor(event.target.value);
-    const surfaceLabel = surface === 'both' ? 'leading edge, both surfaces' : `${surface} surface`;
-    $('tappingChordReadout').textContent = `x = ${x.toFixed(2)} (${surfaceLabel})`;
-});
+$('manualAngleIncrementSelect').addEventListener('change', (event) => window.windTunnel.setManualAngleIncrement(Number(event.target.value)));
 $('dragShapeSelect').addEventListener('change', (event) => window.windTunnel.setDragShape(event.target.value));
 $('fanSpeedIncrementSelect').addEventListener('change', (event) => window.windTunnel.setFanSpeedIncrement(Number(event.target.value)));
 $('stemRacingChartTypeSelect').addEventListener('change', (event) => window.windTunnel.setStemRacingChartType(Number(event.target.value)));
@@ -538,7 +492,44 @@ $('startLog').addEventListener('click', async () => {
     log(result.ok ? `Logging started: ${result.path}` : 'Failed to start logging', result.ok ? 'info' : 'error');
 });
 $('stopLog').addEventListener('click', async () => { const result = await window.windTunnel.stopLog(); log(`Logging stopped; ${result.rowCount} rows written`); });
+// A new aerofoil test begins at tapping channel 1, so ask for the aerofoil's angle there --
+// the angle is typed in by hand, and this stops it being forgotten. Resolves to the angle, or
+// null if the operator cancels (the point is then not logged).
+function askAerofoilAngle() {
+    return new Promise((resolve) => {
+        const modal = $('aerofoilAngleModal');
+        const form = $('aerofoilAngleForm');
+        const input = $('aerofoilAngleDialogInput');
+        input.value = (state.lastDeviceState && state.lastDeviceState.aerofoilAngle) || 0;
+        modal.classList.add('modal-open');
+        input.focus();
+        input.select();
+        const done = (result) => {
+            form.removeEventListener('submit', onSubmit);
+            $('aerofoilAngleCancel').removeEventListener('click', onCancel);
+            $('aerofoilAngleBackdrop').removeEventListener('click', onCancel);
+            modal.classList.remove('modal-open');
+            resolve(result);
+        };
+        const onCancel = () => done(null);
+        const onSubmit = (event) => {
+            event.preventDefault();
+            done(Math.min(45, Math.max(-45, Math.round(Number(input.value) || 0))));
+        };
+        form.addEventListener('submit', onSubmit);
+        $('aerofoilAngleCancel').addEventListener('click', onCancel);
+        $('aerofoilAngleBackdrop').addEventListener('click', onCancel);
+    });
+}
+
 $('logPointButton').addEventListener('click', async () => {
+    const device = state.lastDeviceState;
+    if (state.currentExperiment && state.currentExperiment.id === 'pressureTappedAerofoil' && device && device.tapping.channel === 1) {
+        const angle = await askAerofoilAngle();
+        if (angle === null) return;
+        await window.windTunnel.setAerofoilAngle(angle);
+        log(`Aerofoil angle set to ${angle}°`);
+    }
     const result = await window.windTunnel.logPoint();
     log(result.ok ? 'Point logged' : 'Failed to log point', result.ok ? 'info' : 'error');
 });

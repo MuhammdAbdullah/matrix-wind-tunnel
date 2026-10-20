@@ -15,10 +15,9 @@ contextBridge.exposeInMainWorld('windTunnel', {
 
     listExperiments: () => ipcRenderer.invoke('experiment:list'),
     selectExperiment: (experimentId) => ipcRenderer.invoke('experiment:select', experimentId),
-    setTapping: (channel, increment) => ipcRenderer.invoke('experiment:setTapping', { channel, increment }),
+    setTapping: (channel) => ipcRenderer.invoke('experiment:setTapping', { channel }),
+    setAerofoilAngle: (value) => ipcRenderer.invoke('experiment:setAerofoilAngle', value),
     setManualAngleIncrement: (increment) => ipcRenderer.invoke('experiment:setManualAngleIncrement', increment),
-    setManualAngleCurrent: (value) => ipcRenderer.invoke('experiment:setManualAngleCurrent', value),
-    setAerofoilAoA: (value) => ipcRenderer.invoke('experiment:setAerofoilAoA', value),
     setFanSpeedIncrement: (increment) => ipcRenderer.invoke('experiment:setFanSpeedIncrement', increment),
     setStemRacingChartType: (chartType) => ipcRenderer.invoke('experiment:setStemRacingChartType', chartType),
     setCustomAxes: (xField, yField) => ipcRenderer.invoke('experiment:setCustomAxes', { xField, yField }),

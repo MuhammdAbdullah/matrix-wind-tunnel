@@ -69,38 +69,25 @@ ipcMain.handle('experiment:select', (_event, experimentId) => {
     if (state.logging.active && state.logging.experimentId !== experimentId) logging.stopLog();
     state.experimentId = experiments.getById(experimentId).id;
     state.tapping = { channel: 1, increment: 1 };
-    state.manualAngle = { current: 0, increment: 5 };
-    state.aerofoilAoA = 0;
+    state.aerofoilAngle = 0;
+    state.manualAngle = { increment: 5 };
     publish();
     return { experimentId: state.experimentId };
 });
-ipcMain.handle('experiment:setTapping', (_event, { channel, increment }) => {
+ipcMain.handle('experiment:setTapping', (_event, { channel }) => {
     if (channel !== undefined) state.tapping.channel = Math.min(23, Math.max(1, Number(channel) || 1));
-    if (increment !== undefined) state.tapping.increment = Math.min(6, Math.max(0, Number(increment) || 0));
     publish();
     return state.tapping;
 });
+ipcMain.handle('experiment:setAerofoilAngle', (_event, value) => {
+    state.aerofoilAngle = Math.min(45, Math.max(-45, Number(value) || 0));
+    publish();
+    return state.aerofoilAngle;
+});
 ipcMain.handle('experiment:setManualAngleIncrement', (_event, increment) => {
-    state.manualAngle.increment = Math.min(25, Math.max(0, Number(increment) || 0));
+    state.manualAngle.increment = Math.min(45, Math.max(0, Number(increment) || 0));
     publish();
     return state.manualAngle;
-});
-// Pressure Tapped Cylinder has no motor -- this just corrects/presets the operator-facing
-// "rotate cylinder to this angle" counter (e.g. to re-sync after a missed click, or to jump
-// straight to a specific angle), mirroring the legacy source's own self-wrapping counter.
-ipcMain.handle('experiment:setManualAngleCurrent', (_event, value) => {
-    const next = Math.round(Number(value) || 0);
-    state.manualAngle.current = Math.min(180, Math.max(-180, next));
-    publish();
-    return state.manualAngle;
-});
-// Aerofoil angle of attack is set by physically repositioning the aerofoil between full
-// 23-tapping sweeps -- this records what the operator set it to, for the CSV and for
-// grouping/comparing runs taken at different fixed angles (Worksheet 3's 0/5/12 degree runs).
-ipcMain.handle('experiment:setAerofoilAoA', (_event, value) => {
-    state.aerofoilAoA = Math.min(45, Math.max(-45, Number(value) || 0));
-    publish();
-    return state.aerofoilAoA;
 });
 ipcMain.handle('experiment:setFanSpeedIncrement', (_event, increment) => {
     state.fanSpeedIncrement = Math.min(25, Math.max(0, Number(increment) || 0));

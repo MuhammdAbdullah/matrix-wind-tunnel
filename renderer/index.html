@@ -83,18 +83,6 @@
                         <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
                     </div>
                 </article>
-                <article id="pressureDistPanel" class="card bg-base-200 border border-base-300 chart-panel hidden">
-                    <div class="card-body">
-                        <div class="panel-heading">
-                            <h2 class="card-title text-base">Pressure Distribution Diagram</h2>
-                            <div class="flex items-center gap-2">
-                                <select id="pressureDistRunSelect" class="select select-sm select-bordered"></select>
-                            </div>
-                        </div>
-                        <p class="text-xs opacity-60">Arrows pointing toward the surface show positive pressure (Cp &gt; 0); arrows pointing away show suction (Cp &lt; 0). Length is proportional to |Cp|.</p>
-                        <div class="chart-wrap"><canvas id="pressureDistChart"></canvas></div>
-                    </div>
-                </article>
             </div>
 
             <!-- Sensors & controls (right) -->
@@ -120,13 +108,9 @@
                         <div id="tappingFields" class="hidden">
                             <div class="split">
                                 <label>Tapping Channel<input id="tappingChannel" type="number" class="input input-bordered input-sm w-full" min="1" max="23" value="1"></label>
-                                <label>Tapping Increment<input id="tappingIncrement" type="number" class="input input-bordered input-sm w-full" min="0" max="6" value="1"></label>
+                                <label>Aerofoil Angle (°)<input id="aerofoilAngle" type="number" class="input input-bordered input-sm w-full" min="-45" max="45" step="1" value="0"></label>
                             </div>
-                            <p id="tappingChordReadout" class="text-xs opacity-70 mt-1">x = 0.00 (leading edge, both surfaces)</p>
                         </div>
-                        <label id="aerofoilAoAField" class="hidden">Angle of Attack (° — set by physically repositioning the aerofoil, then run a full 1-23 tapping sweep)
-                            <input id="aerofoilAoAInput" type="number" class="input input-bordered input-sm w-full" min="-45" max="45" step="1" value="0">
-                        </label>
                         <label id="manualAngleField" class="hidden">Angle Increment per Log Point (° per click of the mechanism)
                             <select id="manualAngleIncrementSelect" class="select select-bordered select-sm w-full">
                                 <option value="0">0° (disabled)</option>
@@ -135,16 +119,12 @@
                                 <option value="15">15° (3 clicks)</option>
                                 <option value="20">20° (4 clicks)</option>
                                 <option value="25">25° (5 clicks)</option>
+                                <option value="30">30° (6 clicks)</option>
+                                <option value="35">35° (7 clicks)</option>
+                                <option value="40">40° (8 clicks)</option>
+                                <option value="45">45° (9 clicks)</option>
                             </select>
                         </label>
-                        <div id="manualAngleCurrentFieldWrap" class="hidden">
-                            <label>Cylinder Angle — rotate the cylinder by hand to this reading, then click Log Point
-                                <span class="value-edit"><input id="manualAngleCurrentValue" type="number" class="value-input" min="-180" max="180" step="1" value="0">°</span>
-                                <input id="manualAngleCurrentSlider" type="range" class="range" min="-180" max="180" value="0">
-                            </label>
-                            <p class="text-xs opacity-60 mt-1">This is the cylinder's hand-rotated dial, not the motorized "Motor Angle" above — the cylinder holder has no motor. Edit the number to correct/preset it.</p>
-                        </div>
-                        <div id="cpReadout" class="hidden text-xs opacity-80 mt-1"></div>
                         <label id="dragShapeField" class="hidden">Drag Shape
                             <select id="dragShapeSelect" class="select select-bordered select-sm w-full"></select>
                         </label>
@@ -387,6 +367,21 @@
         </form>
     </div>
     <div class="modal-backdrop"><button type="button" id="adminPasswordBackdrop">Close</button></div>
+</div>
+
+<div id="aerofoilAngleModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Aerofoil Angle of Attack</h3>
+        <p class="text-xs opacity-60 mt-1">Enter the angle the aerofoil is set to for this test. It is saved with every point in the CSV and shown in the chart legend.</p>
+        <form id="aerofoilAngleForm" method="dialog">
+            <input type="number" id="aerofoilAngleDialogInput" class="input input-bordered w-full mt-4" min="-45" max="45" step="1" value="0">
+            <div class="modal-action">
+                <button type="button" id="aerofoilAngleCancel" class="btn btn-sm btn-outline">Cancel</button>
+                <button type="submit" class="btn btn-sm btn-primary">Start Test</button>
+            </div>
+        </form>
+    </div>
+    <div class="modal-backdrop"><button type="button" id="aerofoilAngleBackdrop">Close</button></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>

@@ -1,8 +1,8 @@
 const WindTunnelCharts = (() => {
-    const TRACE_COLORS = { lift: '#47c2ee', drag: '#f1b15a', pressure: '#b783e8', velocity: '#6fe0a3', fanSpeed: '#e8a0e0', angle: '#e8d35a', pressureTop: '#b783e8', pressureBottom: '#e86f9b', cp: '#47c2ee', cpTop: '#47c2ee', cpBottom: '#f1b15a' };
-    const TRACE_UNITS = { lift: 'mN', drag: 'mN', pressure: 'Pa', velocity: 'm/s', fanSpeed: '%', angle: '°', pressureTop: 'Pa', pressureBottom: 'Pa', cp: '', cpTop: '', cpBottom: '', time: 's' };
-    const AXIS_LABELS = { time: 'Time', fanSpeed: 'Fan Speed', angle: 'Angle', lift: 'Lift', drag: 'Drag', pressure: 'Pressure', velocity: 'Velocity', cp: 'Cp', chordX: 'Fractional Chord Position', manualAngle: 'Angle of Attack' };
-    const TRACE_LABELS = { pressureTop: 'Pressure (Top)', pressureBottom: 'Pressure (Bottom)', cp: 'Cp', cpTop: 'Cp (Top)', cpBottom: 'Cp (Bottom)' };
+    const TRACE_COLORS = { lift: '#47c2ee', drag: '#f1b15a', pressure: '#b783e8', velocity: '#6fe0a3', fanSpeed: '#e8a0e0', angle: '#e8d35a', pressureTop: '#b783e8', pressureBottom: '#e86f9b' };
+    const TRACE_UNITS = { lift: 'mN', drag: 'mN', pressure: 'Pa', velocity: 'm/s', fanSpeed: '%', angle: '°', pressureTop: 'Pa', pressureBottom: 'Pa', time: 's' };
+    const AXIS_LABELS = { time: 'Time', fanSpeed: 'Fan Speed', angle: 'Angle', lift: 'Lift', drag: 'Drag', pressure: 'Pressure', velocity: 'Velocity', tappingX: 'Tapping Position', manualAngle: 'Angle of Attack' };
+    const TRACE_LABELS = { pressureTop: 'Pressure (Top)', pressureBottom: 'Pressure (Bottom)' };
     // One color per sweep run (not per trace) so repeated sweeps stay visually distinct when
     // stacked on the history chart; traces within the same run share its color and are told
     // apart by dash style instead (solid first trace, dashed second), mirroring the legacy
@@ -68,8 +68,12 @@ const WindTunnelCharts = (() => {
                     labels: {
                         color: textColor,
                         font: { size: 10 },
+                        // A line sample (not a circle) so the legend shows each trace's real colour
+                        // AND dash style -- the only way to tell a run's solid/dashed traces apart.
                         usePointStyle: true,
-                        pointStyle: 'circle',
+                        pointStyle: 'line',
+                        boxWidth: 36,
+                        pointStyleWidth: 36,
                         generateLabels(chart) {
                             const original = Chart.defaults.plugins.legend.labels.generateLabels;
                             const labels = original.call(this, chart);
@@ -290,7 +294,7 @@ const WindTunnelCharts = (() => {
             const color = RUN_COLOR_PALETTE[runIndex % RUN_COLOR_PALETTE.length];
             traces.forEach((trace, traceIndex) => {
                 const traceLabel = TRACE_LABELS[trace] || `${trace[0].toUpperCase()}${trace.slice(1)}`;
-                const label = `${traceLabel} @ ${run.label}`;
+                const label = run.label ? `${traceLabel} @ ${run.label}` : traceLabel;
                 datasets.push({
                     label,
                     data: run.points.map((point) => ({ x: point.x, y: point.sensors[trace] ?? null })),
@@ -310,118 +314,5 @@ const WindTunnelCharts = (() => {
         historyChart.update();
     }
 
-    // CP0704-Aerodynamics.pdf Worksheets 2 and 3 both ask students to hand-draw a "pressure
-    // distribution diagram": arrows normal to the surface, pointing toward it for positive Cp
-    // and away from it for negative Cp (suction), length proportional to |Cp|. This draws that
-    // diagram automatically instead of leaving it to the student -- a circle swept by angle for
-    // the Cylinder, and a straight chord line with arrows above/below for the Aerofoil (a
-    // schematic simplification of the true NACA0015 profile, adequate for showing the
-    // suction-peak-near-leading-edge shape the worksheet asks students to notice).
-    function drawPressureDistribution(canvas, experiment, points) {
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1;
-        const cssWidth = canvas.clientWidth || 480;
-        const cssHeight = canvas.clientHeight || 320;
-        canvas.width = cssWidth * dpr;
-        canvas.height = cssHeight * dpr;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-        const textColor = themeTextColor();
-        ctx.strokeStyle = 'rgba(130,154,170,0.5)';
-        ctx.fillStyle = textColor;
-        ctx.font = '11px sans-serif';
-
-        const validPoints = points.filter((point) => point.sensors && typeof point.sensors.cp === 'number');
-        if (!validPoints.length) {
-            ctx.fillText('No Cp data yet for this run -- log points with a pitot-static calibration available.', 12, cssHeight / 2);
-            return;
-        }
-
-        function drawArrow(x1, y1, x2, y2, color) {
-            ctx.strokeStyle = color;
-            ctx.fillStyle = color;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-            const angle = Math.atan2(y2 - y1, x2 - x1);
-            const headLen = 5;
-            ctx.beginPath();
-            ctx.moveTo(x2, y2);
-            ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
-            ctx.closePath();
-            ctx.fill();
-        }
-
-        const maxAbsCp = Math.max(1, ...validPoints.map((point) => Math.abs(point.sensors.cp)));
-        const scale = (value) => (Math.abs(value) / maxAbsCp) * (experiment.id === 'pressureTappedCylinder' ? 40 : 28);
-
-        if (experiment.id === 'pressureTappedCylinder') {
-            const cx = cssWidth / 2;
-            const cy = cssHeight / 2;
-            const radius = Math.min(cssWidth, cssHeight) / 2 - 55;
-            ctx.strokeStyle = textColor;
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-            ctx.stroke();
-            // Flow-direction arrows upstream of the cylinder, matching the worksheet diagram.
-            for (let row = -1; row <= 1; row += 1) {
-                drawArrow(cx - radius - 55, cy + row * 20, cx - radius - 15, cy + row * 20, 'rgba(130,154,170,0.8)');
-            }
-            ctx.fillText('Air flow', cx - radius - 55, cy - 35);
-
-            validPoints.forEach((point) => {
-                const cp = point.sensors.cp;
-                const thetaRad = (point.x * Math.PI) / 180;
-                // theta=0 at the upstream (left) point, matching the worksheet's stagnation-point convention.
-                const nx = -Math.cos(thetaRad);
-                const ny = -Math.sin(thetaRad);
-                const sx = cx + nx * radius;
-                const sy = cy + ny * radius;
-                const len = Math.max(4, scale(cp));
-                const outerX = sx + nx * len;
-                const outerY = sy + ny * len;
-                const color = cp >= 0 ? '#f1b15a' : '#47c2ee';
-                if (cp >= 0) drawArrow(outerX, outerY, sx, sy, color);
-                else drawArrow(sx, sy, outerX, outerY, color);
-            });
-        } else {
-            // Aerofoil: schematic chord line, arrows normal to it, upper points above, lower below.
-            const marginX = 50;
-            const chordY = cssHeight / 2;
-            const chordLen = cssWidth - marginX * 2;
-            ctx.strokeStyle = textColor;
-            ctx.beginPath();
-            ctx.moveTo(marginX, chordY);
-            ctx.lineTo(marginX + chordLen, chordY);
-            ctx.stroke();
-            drawArrow(marginX - 35, chordY, marginX - 5, chordY, 'rgba(130,154,170,0.8)');
-            ctx.fillText('Air flow', marginX - 35, chordY - 10);
-            ctx.fillText('Leading edge', marginX - 10, chordY + 18);
-            ctx.fillText('Trailing edge', marginX + chordLen - 35, chordY + 18);
-
-            validPoints.forEach((point) => {
-                const surface = point.sensors.surface;
-                const cp = surface === 'upper' ? point.sensors.cpTop : surface === 'lower' ? point.sensors.cpBottom : point.sensors.cp;
-                if (typeof cp !== 'number') return;
-                const sx = marginX + point.x * chordLen;
-                const dir = surface === 'lower' ? 1 : -1; // up for upper surface, down for lower
-                const len = Math.max(4, scale(cp));
-                const sy = chordY + dir * 6;
-                const outerY = sy + dir * len;
-                const color = cp >= 0 ? '#f1b15a' : '#47c2ee';
-                if (cp >= 0) drawArrow(sx, outerY, sx, sy, color);
-                else drawArrow(sx, sy, sx, outerY, color);
-            });
-        }
-
-        ctx.fillStyle = textColor;
-        ctx.fillText(`Orange = positive Cp (toward surface)   Blue = negative Cp / suction (away from surface)   max|Cp| = ${maxAbsCp.toFixed(2)}`, 12, cssHeight - 10);
-    }
-
-    return { createCharts, configureForExperiment, updateLive, updateHistory, updateHistoryRuns, customTitle, updateTheme, drawPressureDistribution };
+    return { createCharts, configureForExperiment, updateLive, updateHistory, updateHistoryRuns, customTitle, updateTheme };
 })();

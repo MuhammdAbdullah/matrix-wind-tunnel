@@ -17,18 +17,12 @@ const state = {
     sensors: { lift: 0, drag: 0, pressure: 0, velocity: 0 },
     diagnostics: { tx: [], rx: [], retries: 0, errors: 0 },
     experimentId: 'sensorsVsTime',
+    // Tapping channel auto-advances by 1 per Log Point (legacy default); there is no operator-set increment.
     tapping: { channel: 1, increment: 1 },
-    manualAngle: { current: 0, increment: 5 },
-    // Pressure Tapped Aerofoil's angle of attack is set by physically repositioning the
-    // aerofoil in its holder between full 23-tapping sweeps (worksheet runs are 0deg/5deg/
-    // 12deg) -- unlike manualAngle it never auto-advances; it exists purely so the operator
-    // can record/tag which fixed angle the current sweep belongs to.
-    aerofoilAoA: 0,
-    // Cp = (P - P_inf) / (0.5 * rho * V^2) needs a free-stream reference pressure, P_inf,
-    // which the worksheets derive from the pitot-static ("Convert Pressure to Velocity")
-    // experiment's own logged readings. Keyed by the fan speed (%) active when each
-    // pitot-static point was logged; see sweeps.js's recordFreeStreamCalibration().
-    calibration: { pressureByFanSpeed: {} },
+    // Aerofoil angle of attack, typed in by the operator (the aerofoil is turned by hand). Saved with
+    // every logged row and used to name the run on the chart.
+    aerofoilAngle: 0,
+    manualAngle: { increment: 5 },
     dragShape: 'Flat Surface',
     fanSpeedIncrement: 10,
     stemRacingChartType: 1, // 0 = vs Time, 1 = vs Air Speed, 2 = vs Fan Speed

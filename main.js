@@ -171,6 +171,11 @@ ipcMain.handle('calibration:getLut', () => calibration.getLut());
 ipcMain.handle('calibration:calibrateDisplay', () => calibration.calibrateDisplay());
 ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
 
+ipcMain.handle('admin:firmwareInfo', () => ({ approvedImage: firmware.APPROVED_IMAGE_NAME, version: firmware.APPROVED_FIRMWARE_VERSION }));
+ipcMain.handle('admin:bootloaderPickHex', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Select firmware hex file', filters: [{ name: 'Hex Files', extensions: ['hex'] }], properties: ['openFile'] });
+    return result.canceled || !result.filePaths.length ? null : result.filePaths[0];
+});
 ipcMain.handle('admin:bootloaderCheckDevice', (_event, vid, pid) => firmware.checkDevice(vid, pid));
 ipcMain.handle('admin:bootloaderConnect', (_event, vid, pid) => firmware.connect(vid, pid));
 ipcMain.handle('admin:bootloaderDisconnect', () => firmware.disconnect());

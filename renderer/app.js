@@ -667,20 +667,17 @@ function hideFirmwareProgress() {
 // buttons valid for the current connection/hex-load stage are enabled. 'busy' disables everything
 // while an Erase-Program-Verify or Run sequence is in flight.
 function setBootloaderButtonState(bootState) {
-    const ids = ['connectBtn', 'loadHexLabel', 'eraseProgramVerify', 'runAppBtn'];
+    const ids = ['connectBtn', 'loadHexBtn', 'eraseProgramVerify', 'runAppBtn'];
     const enable = (id, value) => { const el = $(id); if (el) el.disabled = !value; };
-    $('hexFile').disabled = true;
     switch (bootState) {
         case 'disconnected':
-            enable('connectBtn', true); enable('loadHexLabel', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
+            enable('connectBtn', true); enable('loadHexBtn', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
             break;
         case 'connected':
-            enable('connectBtn', true); enable('loadHexLabel', true); enable('eraseProgramVerify', false); enable('runAppBtn', false);
-            $('hexFile').disabled = false;
+            enable('connectBtn', true); enable('loadHexBtn', true); enable('eraseProgramVerify', false); enable('runAppBtn', false);
             break;
         case 'hex_loaded':
-            enable('connectBtn', true); enable('loadHexLabel', true); enable('eraseProgramVerify', true); enable('runAppBtn', false);
-            $('hexFile').disabled = false;
+            enable('connectBtn', true); enable('loadHexBtn', true); enable('eraseProgramVerify', true); enable('runAppBtn', false);
             break;
         case 'busy':
             ids.forEach((id) => enable(id, false));
@@ -731,11 +728,12 @@ $('connectBtn').addEventListener('click', async () => {
     }
 });
 
-$('hexFile').addEventListener('change', async (event) => {
-    const file = event.target.files[0];
-    state.hexPath = file?.path || null;
-    $('hexFilePathLabel').textContent = state.hexPath || 'No hex file loaded';
-    if (!state.hexPath) return;
+$('loadHexBtn').addEventListener('click', async () => {
+    // Electron 32+ removed File.path, so the picker lives in the main process.
+    const picked = await window.windTunnel.bootloaderPickHex();
+    if (!picked) return;
+    state.hexPath = picked;
+    $('hexFilePathLabel').textContent = picked;
     try {
         const result = await window.windTunnel.bootloaderLoadHex(state.hexPath);
         if (result && result.ok) {
@@ -801,6 +799,14 @@ $('runAppBtn').addEventListener('click', async () => {
 });
 
 setBootloaderButtonState('disconnected');
+
+window.windTunnel.getFirmwareInfo().then((info) => { $('approvedImageName').textContent = info.approvedImage; });
+
+function updateFirmwareBanner() {
+    $('firmwareBanner').hidden = $('bootloaderPid').value.trim() !== '';
+}
+$('bootloaderPid').addEventListener('input', updateFirmwareBanner);
+updateFirmwareBanner();
 
 window.windTunnel.onFirmwareProgress((entry) => {
     const row = document.createElement('div');

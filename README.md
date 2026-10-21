@@ -92,7 +92,7 @@ Values are the controller's raw floats; drag shape and tapping channel are metad
 
 **Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
-**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it. See `CLAUDE.md` for the full details and known caveats.
+**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it (the approved firmware has no serial command for this, unlike Process Control's `{"BL":1}`), so the Trigger Bootloader button stays disabled. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. The approved image name is derived from `APPROVED_FIRMWARE_VERSION` in `main/firmware.js` (`WindTunnel V<x.y.z>.hex`) and a warning is logged if a different file is loaded. See `CLAUDE.md` for the full details and known caveats.
 
 ## Experiments
 
@@ -185,6 +185,8 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `lockAdmin()` | `admin:lock` | End the session. |
 | `getAuditLog()` | `admin:getAuditLog` | Last 50 audit entries. |
 | `requestElevation()` | `admin:requestElevation` | Stub — always declines (UAC elevation not wired up yet). |
+| `getFirmwareInfo()` | `admin:firmwareInfo` | `{ approvedImage, version }` for the Admin label. |
+| `bootloaderPickHex()` | `admin:bootloaderPickHex` | Native file dialog; returns the chosen path or `null`. |
 | `bootloaderCheckDevice(vid, pid)` | `admin:bootloaderCheckDevice` | `{ ok, present }`. |
 | `bootloaderConnect(vid, pid)` | `admin:bootloaderConnect` | Open the bootloader HID session. |
 | `bootloaderDisconnect()` | `admin:bootloaderDisconnect` | Close it. |

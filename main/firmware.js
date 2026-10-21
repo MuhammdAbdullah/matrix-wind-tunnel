@@ -1,6 +1,11 @@
 const bootloader = require('./bootloader');
 const admin = require('./admin');
 const { pushEvent } = require('./state');
+const path = require('path');
+
+// Single place to bump when a new approved firmware image ships (files are named WindTunnel V<x.y.z>.hex).
+const APPROVED_FIRMWARE_VERSION = '2.0.6';
+const APPROVED_IMAGE_NAME = `WindTunnel V${APPROVED_FIRMWARE_VERSION}.hex`;
 
 function progress(stage, level, message) {
     pushEvent('firmware:progress', { stage, level, message });
@@ -81,6 +86,9 @@ const loadHex = guarded('load-hex', async (hexPath) => {
     const result = bootloader.loadHexFile(hexPath);
     const message = `${result.recordCount} hex records loaded.`;
     progress('load-hex', 'info', message);
+    if (path.basename(hexPath).toLowerCase() !== APPROVED_IMAGE_NAME.toLowerCase()) {
+        progress('load-hex', 'warn', `Selected file is not the approved image (${APPROVED_IMAGE_NAME}).`);
+    }
     return { ok: true, stage: 'load-hex', message, recordCount: result.recordCount };
 });
 
@@ -129,6 +137,8 @@ const jumpToApp = guarded('run', async () => {
 });
 
 module.exports = {
+    APPROVED_FIRMWARE_VERSION,
+    APPROVED_IMAGE_NAME,
     checkDevice,
     connect,
     disconnect,

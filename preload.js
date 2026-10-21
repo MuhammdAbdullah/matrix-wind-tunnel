@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('windTunnel', {
     calibrateDisplay: () => ipcRenderer.invoke('calibration:calibrateDisplay'),
     setNetwork: (ip0, ip1, ip2, ip3, port) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port }),
 
+    getFirmwareInfo: () => ipcRenderer.invoke('admin:firmwareInfo'),
+    bootloaderPickHex: () => ipcRenderer.invoke('admin:bootloaderPickHex'),
     bootloaderCheckDevice: (vid, pid) => ipcRenderer.invoke('admin:bootloaderCheckDevice', vid, pid),
     bootloaderConnect: (vid, pid) => ipcRenderer.invoke('admin:bootloaderConnect', vid, pid),
     bootloaderDisconnect: () => ipcRenderer.invoke('admin:bootloaderDisconnect'),

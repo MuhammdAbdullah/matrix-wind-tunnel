@@ -286,8 +286,8 @@
 
             <!-- BOOTLOADER TAB -->
             <div id="bootloaderTab" class="tab-content">
-                <p>Approved Image: <code>WindTunnel V2.0.6.hex</code></p>
-                <p id="firmwareBanner" class="update-status-message error">Confirm the bootloader's real USB PID in Device Manager before using these actions -- see the note below.</p>
+                <p>Approved Image: <code id="approvedImageName">WindTunnel V2.x.x.hex</code></p>
+                <p id="firmwareBanner" class="update-status-message error" hidden>Confirm the bootloader's real USB PID in Device Manager before using these actions -- see the note below.</p>
                 <div class="admin-grid">
                     <article class="card bg-base-200 border border-base-300">
                         <div class="card-body">
@@ -303,8 +303,7 @@
                     <article class="card bg-base-200 border border-base-300">
                         <div class="card-body">
                             <div class="panel-heading"><h2 class="card-title text-base">Bootloader Actions</h2></div>
-                            <label class="btn btn-sm btn-outline" for="hexFile" id="loadHexLabel">Load Hex File</label>
-                            <input type="file" id="hexFile" accept=".hex" class="hidden" disabled>
+                            <button class="btn btn-sm btn-outline" id="loadHexBtn" disabled>Load Hex File</button>
                             <p class="text-xs opacity-60 mt-1" id="hexFilePathLabel">No hex file loaded</p>
                             <div class="button-row mt-2">
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="erase" id="eraseBtn" style="display:none;">Erase</button>

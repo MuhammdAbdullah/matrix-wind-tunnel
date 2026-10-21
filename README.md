@@ -248,6 +248,12 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ## Release notes
 
+### v0.1.4
+
+- Fix: Admin > Bootloader "Load Hex File" now works (native file dialog; Electron 32+ no longer provides `File.path`, so hex files could never be loaded before).
+- The approved firmware image name is derived from one version constant (`WindTunnel V<x.y.z>.hex`); a warning is logged if a different hex file is loaded.
+- The PID warning banner only shows while the bootloader PID field is empty. Trigger Bootloader remains disabled: the approved firmware has no remote command for it (use the touchscreen).
+
 ### v0.1.3
 
 - **In-app updates:** the Admin > Updates "Check For Updates" button now works (electron-updater via GitHub releases): check, "download?" prompt with progress, then "Restart Now" prompt. Updates only work in the installed app, not from source. Note: v0.1.1/v0.1.2 installs have the old non-functional button, so install v0.1.3 manually once.

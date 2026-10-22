@@ -41,7 +41,12 @@ function createWindow() {
 ipcMain.handle('device:getState', () => state);
 ipcMain.handle('device:listPorts', () => serial.listPorts());
 ipcMain.handle('device:connectPort', (_event, portPath, baudRate = 115200) => serial.connectHardware(portPath, baudRate));
-ipcMain.handle('device:disconnect', () => { serial.disconnect(); return state; });
+ipcMain.handle('device:disconnect', () => {
+    // Stop first: the auto-scan reconnects within seconds and a surviving sweep would drive the fan on the new session.
+    sweeps.stopSweep();
+    serial.disconnect();
+    return state;
+});
 ipcMain.handle('device:setFanSpeed', (_event, value) => serial.setFanSpeed(value, { source: 'control' }));
 ipcMain.handle('device:setAngle', (_event, value) => serial.setAngle(value, { source: 'control' }));
 ipcMain.handle('device:setLeds', (_event, payload) => serial.setLeds({ ...payload, source: 'control' }));
@@ -143,13 +148,17 @@ async function ensureLoggingForSweep(experiment) {
     return { ok: true };
 }
 
+const NOT_CONNECTED = { ok: false, message: 'Controller not connected; sweep not started' };
+
 ipcMain.handle('sweep:startAngle', async (_event, options = {}) => {
+    if (!state.connected) return NOT_CONNECTED;
     const experiment = experiments.getById(state.experimentId);
     const ensured = await ensureLoggingForSweep(experiment);
     if (!ensured.ok) return ensured;
     return sweeps.startAngleSweep(options);
 });
 ipcMain.handle('sweep:startFan', async (_event, options = {}) => {
+    if (!state.connected) return NOT_CONNECTED;
     const experiment = experiments.getById(state.experimentId);
     const ensured = await ensureLoggingForSweep(experiment);
     if (!ensured.ok) return ensured;
@@ -222,7 +231,7 @@ app.on('before-quit', (event) => {
     shutdownSafe = true;
     sweeps.stopSweep();
     Promise.race([
-        serial.enterSafeState('system'),
+        serial.enterSafeState('system', { preempt: true }),
         new Promise((resolve) => setTimeout(resolve, 5000))
     ]).catch(() => {}).finally(() => app.quit());
 });

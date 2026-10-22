@@ -7,6 +7,11 @@ const DEFAULT_SAMPLE_TIME_MS = 1000;
 
 let sensorTimer = null;
 let sweepTimer = null;
+let sensorReadInFlight = false;
+// Bumped on every sweep start/stop so a tick that was mid-await when the sweep ended cannot act afterwards.
+let sweepToken = 0;
+let sweepReadFailures = 0;
+const MAX_CONSECUTIVE_SWEEP_READ_FAILURES = 2;
 
 serial.onUnexpectedDisconnect(() => stopSweep());
 
@@ -15,25 +20,31 @@ function startSensorSampleTimer(sampleTimeMs = DEFAULT_SAMPLE_TIME_MS) {
     sensorTimer = setInterval(async () => {
         if (state.simulation) return; // renderer-visible simulated sensors are driven elsewhere
         if (state.sweep.running) return; // the active sweep's own tick already reads+logs each cycle
+        if (!state.connected) return; // nothing to read; the serial layer is already reconnecting
+        if (sensorReadInFlight) return; // never stack reads behind a slow/unresponsive controller
+        sensorReadInFlight = true;
         try {
-            await serial.readSensorsOnce({ source: 'system' });
-            serial.reportReadOutcome(true);
-            publish();
-        } catch (_error) {
-            serial.reportReadOutcome(false);
-            state.diagnostics.errors += 1;
-            publish();
-        }
-        // Only sensorsVsTime logs continuously on this timer -- the legacy source's own timer
-        // wiring only auto-triggers OnLogButtonClick on every sensor-sample tick when
-        // Exercise = 6; every other no-sweep experiment (manualLog: true) is logged one point
-        // at a time via logPoint(), fired by the renderer's "Log Point" button.
-        const experiment = experiments.getById(state.experimentId);
-        if (state.logging.active && !experiment.sweepType && !experiment.manualLog) {
-            logging.appendRow(buildRow(experiment));
-            advanceTapping(experiment);
-            advanceManualAngle(experiment);
-            await advanceFanSpeedOnLog(experiment);
+            try {
+                await serial.readSensorsOnce({ source: 'system' });
+                publish();
+            } catch (_error) {
+                state.diagnostics.errors += 1;
+                publish();
+                return; // no fresh reading: never log a stale sensor row under a new timestamp
+            }
+            // Only sensorsVsTime logs continuously on this timer -- the legacy source's own timer
+            // wiring only auto-triggers OnLogButtonClick on every sensor-sample tick when
+            // Exercise = 6; every other no-sweep experiment (manualLog: true) is logged one point
+            // at a time via logPoint(), fired by the renderer's "Log Point" button.
+            const experiment = experiments.getById(state.experimentId);
+            if (state.logging.active && !experiment.sweepType && !experiment.manualLog) {
+                logging.appendRow(buildRow(experiment));
+                advanceTapping(experiment);
+                advanceManualAngle(experiment);
+                await advanceFanSpeedOnLog(experiment);
+            }
+        } finally {
+            sensorReadInFlight = false;
         }
     }, sampleTimeMs);
 }
@@ -125,30 +136,46 @@ async function advanceFanSpeedOnLog(experiment) {
 // visible on the first logged point after a big jump to the sweep's start angle). Scale the wait
 // by how far this particular move actually travelled relative to one normal step, instead of
 // always using the configured per-step delay verbatim.
-async function tick(moveActuator, fromValue) {
+async function tick(moveActuator, fromValue, token) {
+    if (token !== sweepToken || !state.sweep.running) return;
+    if (!state.connected) { stopSweep(); return; }
     const target = state.sweep.current;
     await moveActuator(target, { source: 'control' });
-    if (!state.sweep.running) return; // stopped while the move was in flight
+    if (token !== sweepToken || !state.sweep.running) return; // stopped while the move was in flight
 
     const distance = Math.abs(target - fromValue);
     const normalStep = Math.abs(state.sweep.step) || 1;
     const settleDelay = Math.max(state.sweep.delay, Math.round(state.sweep.delay * (distance / normalStep)));
 
     sweepTimer = setTimeout(async () => {
-        if (!state.sweep.running) return; // stopped during the settle wait
+        if (token !== sweepToken || !state.sweep.running) return; // stopped during the settle wait
 
+        let readOk = true;
         try {
             await serial.readSensorsOnce({ source: 'control' });
-            serial.reportReadOutcome(true);
         } catch (_error) {
-            serial.reportReadOutcome(false);
+            readOk = false;
             state.diagnostics.errors += 1;
         }
+        if (token !== sweepToken || !state.sweep.running) return; // stopped (or link lost) during the read
+
         const experiment = experiments.getById(state.experimentId);
-        if (state.logging.active) {
-            logging.appendRow(buildRow(experiment));
-            advanceTapping(experiment);
-            advanceManualAngle(experiment);
+        if (readOk) {
+            sweepReadFailures = 0;
+            if (state.logging.active) {
+                logging.appendRow(buildRow(experiment));
+                advanceTapping(experiment);
+                advanceManualAngle(experiment);
+            }
+        } else {
+            // No fresh reading: skip the row rather than logging stale sensors under a new timestamp,
+            // and give up if the controller keeps failing to answer.
+            sweepReadFailures += 1;
+            if (sweepReadFailures >= MAX_CONSECUTIVE_SWEEP_READ_FAILURES) {
+                console.log('[sweeps] Controller stopped answering sensor reads; stopping sweep');
+                stopSweep();
+                return;
+            }
         }
         publish();
 
@@ -158,12 +185,13 @@ async function tick(moveActuator, fromValue) {
             return;
         }
         state.sweep.current += state.sweep.step;
-        tick(moveActuator, target);
+        tick(moveActuator, target, token);
     }, settleDelay);
 }
 
 function startSweep(type, options, moveActuator) {
-    stopSweep();
+    if (!state.connected) return { ok: false, message: 'Controller not connected; sweep not started' };
+    stopSweep(); // also advances sweepToken, invalidating any tick from the previous sweep
     const defaults = experiments.SWEEP_DEFAULTS[type];
     const start = Number(options.start ?? defaults.start);
     const end = Number(options.end ?? defaults.end);
@@ -172,10 +200,11 @@ function startSweep(type, options, moveActuator) {
     const delay = Math.max(100, Number(options.delay ?? defaults.delay));
 
     state.sweep = { type, running: true, start, end, step, delay, current: start };
+    sweepReadFailures = 0;
     publish();
 
     const fromValue = type === 'angle' ? state.angle : state.fanSpeed;
-    tick(moveActuator, fromValue);
+    tick(moveActuator, fromValue, sweepToken);
     return { ok: true, sweep: state.sweep };
 }
 
@@ -188,6 +217,7 @@ function startFanSweep(options = {}) {
 }
 
 function stopSweep() {
+    sweepToken += 1;
     if (sweepTimer) { clearTimeout(sweepTimer); sweepTimer = null; }
     if (state.sweep.running) {
         state.sweep = { ...state.sweep, running: false, current: state.sweep.start };

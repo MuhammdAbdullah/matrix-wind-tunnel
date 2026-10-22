@@ -15,24 +15,137 @@ function guard() {
     return null;
 }
 
-async function setScaler({ channel, mode, value }) {
-    const blocked = guard();
-    if (blocked) return { ok: false, acknowledged: false, message: blocked };
-    const payload = Buffer.concat([Buffer.from([channel]), floatBuffer(value), Buffer.from([mode])]);
-    try {
-        await serial.sendBinary(CMD.SET_SCALER, payload, { source: 'calibrator' });
-        const readBack = await serial.sendBinary(CMD.GET_SCALERS, Buffer.alloc(0), { source: 'calibrator' });
-        const newValue = readBack.readFloatLE(channel * 4);
-        return { ok: true, acknowledged: true, message: `Scaler channel ${channel} confirmed at ${newValue}`, newValue };
-    } catch (error) {
-        appendAudit({ source: 'calibrator', command: CMD.SET_SCALER, payload: [...payload], result: 'failed', error: error.message });
-        return { ok: false, acknowledged: false, message: `Write not acknowledged: ${error.message}` };
+const SCALER_CHANNELS = ['Lift', 'Drag', 'Pressure'];
+const SCALER_ABSOLUTE = 0;
+const SCALER_RELATIVE = 1;
+const SCALER_MODE_NAMES = ['Absolute', 'Relative'];
+// The legacy calibrator encodes scalers with 6 decimals ("AssignDataAsFloat(.., 6)") and the firmware
+// reports them with 6 decimals, so that is the resolution the controller can confirm.
+const SCALER_DECIMALS = 6;
+// Sanity ceiling only: a typo such as 1e30 must not be persisted to EEPROM (real scalers are ~0.1-10).
+const SCALER_MAX_MAGNITUDE = 1000000;
+// V2.0.6 stores the scaler to EEPROM while it handles the command; the legacy calibrator also reads
+// back straight after a write, but the table writes need ~100 ms, so give the scalers the same gap.
+const SCALER_SETTLE_MS = 100;
+// Used when running with --simulate (no controller): matches the firmware's default scalers.
+const simulatedScalers = [0.755, 0.698, 0.15];
+
+// Float32 -> the 6 decimal value the controller reports. Without this a float32 widened to a double
+// shows up as e.g. 0.7549999952316284 in the UI and on the wire.
+function roundScaler(value) {
+    return Number(Number(value).toFixed(SCALER_DECIMALS));
+}
+
+// Mirrors the firmware's `senscmode` handling: Absolute replaces the stored scaler, Relative
+// multiplies the stored scaler by the factor. Stored values are float32.
+function expectedScaler(current, factor, mode) {
+    return Math.fround(mode === SCALER_RELATIVE ? Math.fround(factor) * Math.fround(current) : Math.fround(factor));
+}
+
+// The controller reports 6 decimals of a float32, and a Relative result is computed from the (also
+// 6 decimal) value that was read beforehand, so allow for both roundings.
+function scalerMatches(read, expected, factor, mode) {
+    if (!Number.isFinite(read)) return false;
+    const tolerance = 1e-6 + 1e-6 * Math.abs(expected) + (mode === SCALER_RELATIVE ? 5e-7 * Math.abs(factor) : 0);
+    return Math.abs(read - expected) <= tolerance;
+}
+
+// Only a number or plain digits: Number() alone would turn null/''/true/[1] into a channel or mode.
+function parseSmallInteger(raw) {
+    if (typeof raw === 'number') return Number.isInteger(raw) ? raw : NaN;
+    if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) return Number(raw.trim());
+    return NaN;
+}
+
+// Plain decimal notation (optionally with an exponent) only: Number() also accepts '0x10', '0b1', '' and [1].
+const SCALER_TEXT_PATTERN = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+function parseScalerRequest({ channel, mode, value }) {
+    const channelNumber = parseSmallInteger(channel);
+    if (!(channelNumber >= 0 && channelNumber < SCALER_CHANNELS.length)) {
+        return { error: 'Scaler channel must be 0 (lift), 1 (drag) or 2 (pressure).' };
     }
+    const modeNumber = parseSmallInteger(mode);
+    if (modeNumber !== SCALER_ABSOLUTE && modeNumber !== SCALER_RELATIVE) {
+        return { error: 'Scaler mode must be 0 (Absolute) or 1 (Relative).' };
+    }
+    // Number('') is 0 and Number('abc') is NaN: neither may reach the EEPROM as a silent 0.
+    let factor = NaN;
+    if (typeof value === 'number') factor = value;
+    else if (typeof value === 'string' && SCALER_TEXT_PATTERN.test(value.trim())) factor = Number(value.trim());
+    if (!Number.isFinite(factor)) return { error: `Enter a number for the ${SCALER_CHANNELS[channelNumber].toLowerCase()} scale factor (for example 0.95).` };
+    const rounded = roundScaler(factor);
+    if (rounded === 0) return { error: 'A scale factor of 0 would zero the sensor; enter a non-zero value (resolution is 0.000001).' };
+    if (Math.abs(rounded) > SCALER_MAX_MAGNITUDE) return { error: `Scale factor must be between -${SCALER_MAX_MAGNITUDE} and ${SCALER_MAX_MAGNITUDE}.` };
+    return { channel: channelNumber, mode: modeNumber, factor: rounded };
+}
+
+async function readScalerValues() {
+    if (state.simulation) return [...simulatedScalers];
+    const readBack = await serial.sendBinary(CMD.GET_SCALERS, Buffer.alloc(0), { source: 'calibrator' });
+    const values = [0, 1, 2].map((index) => readBack.readFloatLE(index * 4));
+    // A garbled reply must surface as an error, not as NaN fields or a NaN "old value" before a write.
+    if (!values.every(Number.isFinite)) throw new Error('Controller returned an invalid scaler value');
+    return values;
 }
 
 async function getScalers() {
-    const readBack = await serial.sendBinary(CMD.GET_SCALERS, Buffer.alloc(0), { source: 'calibrator' });
-    return { lift: readBack.readFloatLE(0), drag: readBack.readFloatLE(4), pressure: readBack.readFloatLE(8) };
+    const [lift, drag, pressure] = (await readScalerValues()).map(roundScaler);
+    return { lift, drag, pressure };
+}
+
+// Reads the scaler first (old value, and the base a Relative factor multiplies), writes, waits for the
+// EEPROM write, then reads back. `acknowledged` is only true when the controller reports the value the
+// firmware's own Absolute/Relative rule predicts - never from the write alone, which has no reply.
+async function setScaler(request) {
+    const blocked = guard();
+    if (blocked) return { ok: false, acknowledged: false, message: blocked };
+    const parsed = parseScalerRequest(request || {});
+    if (parsed.error) return { ok: false, acknowledged: false, message: parsed.error };
+    const { channel, mode, factor } = parsed;
+    const label = `${SCALER_CHANNELS[channel]} scaler (${SCALER_MODE_NAMES[mode]})`;
+    const payload = Buffer.concat([Buffer.from([channel]), floatBuffer(factor), Buffer.from([mode])]);
+
+    let before;
+    try {
+        before = (await readScalerValues())[channel];
+    } catch (error) {
+        return { ok: false, acknowledged: false, message: `${label} not written - could not read the current scaler: ${error.message}` };
+    }
+    const oldValue = roundScaler(before);
+    const expected = expectedScaler(before, factor, mode);
+    // Relative can drive the stored scaler somewhere the factor alone never shows (0 stays 0, 1e-4 * 0.001 -> 0).
+    const resulting = roundScaler(expected);
+    if (mode === SCALER_RELATIVE && (oldValue === 0 || resulting === 0 || Math.abs(resulting) > SCALER_MAX_MAGNITUDE)) {
+        const reason = oldValue === 0 ? 'the stored scaler is 0, so a Relative factor can never change it - use Absolute'
+            : `the result would be ${resulting === 0 ? '0' : expected}, outside the usable range`;
+        return { ok: false, acknowledged: false, oldValue, message: `${label} not written: ${reason}.` };
+    }
+
+    if (state.simulation) {
+        simulatedScalers[channel] = roundScaler(expected);
+        return { ok: true, acknowledged: true, oldValue, newValue: simulatedScalers[channel], message: `${label} written and confirmed (simulation): ${oldValue} -> ${simulatedScalers[channel]}.` };
+    }
+
+    let written = false;
+    try {
+        await serial.sendBinary(CMD.SET_SCALER, payload, { source: 'calibrator' });
+        written = true;
+        await wait(SCALER_SETTLE_MS);
+        const after = (await readScalerValues())[channel];
+        const newValue = roundScaler(after);
+        if (!scalerMatches(after, expected, factor, mode)) {
+            return {
+                ok: false, acknowledged: false, oldValue, newValue,
+                message: `${label} not confirmed: sent ${factor}, expected ${roundScaler(expected)} but the controller reports ${newValue} (was ${oldValue}). Press Refresh to re-read the controller.`
+            };
+        }
+        return { ok: true, acknowledged: true, oldValue, newValue, message: `${label} confirmed by the controller: ${oldValue} -> ${newValue}.` };
+    } catch (error) {
+        appendAudit({ source: 'calibrator', command: CMD.SET_SCALER, payload: [...payload], result: 'failed', error: error.message });
+        const detail = written ? `the write was sent but the read-back failed (${error.message}); press Refresh to see what the controller holds` : `write not acknowledged: ${error.message}`;
+        return { ok: false, acknowledged: false, oldValue, message: `${label} ${detail}` };
+    }
 }
 
 const LUT_SIZE = 10;

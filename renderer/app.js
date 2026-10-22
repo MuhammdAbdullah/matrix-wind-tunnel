@@ -255,11 +255,15 @@ function render(value) {
         WindTunnelCharts.configureForExperiment(chartExperiment(state.currentExperiment), state.customAxes);
     }
 
-    $('connectionBadge').textContent = value.connected ? (value.simulation ? 'SIMULATION MODE' : 'SYSTEM ONLINE') : 'SYSTEM OFFLINE';
-    $('connectionBadge').className = `badge badge-sm gap-1 font-bold tracking-wider uppercase ${value.connected ? 'badge-success' : 'badge-error'}`;
+    // linkDegraded: connected but the controller has been silent for a few seconds (the watchdog drops
+    // the link if it stays silent). connecting: a port is open and awaiting the version reply.
+    const degraded = value.connected && value.linkDegraded;
+    const badgeTone = degraded || (value.connecting && !value.connected) ? 'badge-warning' : value.connected ? 'badge-success' : 'badge-error';
+    $('connectionBadge').textContent = degraded ? 'NOT RESPONDING' : value.connected ? (value.simulation ? 'SIMULATION MODE' : 'SYSTEM ONLINE') : value.connecting ? 'CONNECTING' : 'SYSTEM OFFLINE';
+    $('connectionBadge').className = `badge badge-sm gap-1 font-bold tracking-wider uppercase ${badgeTone}`;
 
-    $('adminConnectionPill').textContent = value.connected ? 'Connected' : 'Searching';
-    $('adminConnectionPill').className = `badge ${value.connected ? 'badge-success' : 'badge-error'}`;
+    $('adminConnectionPill').textContent = degraded ? 'Not responding' : value.connected ? 'Connected' : value.connecting ? 'Connecting' : 'Searching';
+    $('adminConnectionPill').className = `badge ${badgeTone}`;
     $('adminTransport').textContent = value.connected ? `${value.simulation ? 'Simulation' : 'USB serial'} · ${value.port}` : 'USB serial · waiting';
     $('adminRetries').textContent = value.diagnostics.retries;
     $('adminErrors').textContent = value.diagnostics.errors;
@@ -597,23 +601,51 @@ async function unlockAdmin() {
     });
 }
 
+const SCALER_INPUT_IDS = ['liftScaler', 'dragScaler', 'pressureScaler'];
+const SCALER_MODE_IDS = ['liftMode', 'dragMode', 'pressureMode'];
+let scalerBusy = false;
+
+function setScalerBusy(busy) {
+    scalerBusy = busy;
+    document.querySelectorAll('.calibration, #refreshScalers').forEach((button) => { button.disabled = busy; });
+}
+
 async function refreshScalers() {
+    if (scalerBusy) return;
+    setScalerBusy(true);
     try {
         const scalers = await window.windTunnel.getScalers();
         $('liftScaler').value = scalers.lift;
         $('dragScaler').value = scalers.drag;
         $('pressureScaler').value = scalers.pressure;
+        // The fields now hold absolute values, so a Relative mode left selected would square them on Save.
+        SCALER_MODE_IDS.forEach((id) => { $(id).value = '0'; });
     } catch (error) { log(`Could not read scalers: ${error.message}`, 'error'); }
+    finally { setScalerBusy(false); }
 }
 $('refreshScalers').addEventListener('click', refreshScalers);
 document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => {
+    if (scalerBusy) return;
     const channel = Number(button.dataset.scaler);
-    const inputId = ['liftScaler', 'dragScaler', 'pressureScaler'][channel];
-    const modeId = ['liftMode', 'dragMode', 'pressureMode'][channel];
-    const result = await window.windTunnel.setScaler(channel, Number($(modeId).value), Number($(inputId).value));
-    if (result.ok) $(inputId).value = result.newValue;
-    $('scalerAck').textContent = result.message;
-    log(result.message, result.ok ? 'info' : 'error');
+    const inputId = SCALER_INPUT_IDS[channel];
+    const modeId = SCALER_MODE_IDS[channel];
+    // The raw text goes to the main process, which validates it: Number('') would silently be 0 here.
+    setScalerBusy(true);
+    try {
+        const result = await window.windTunnel.setScaler(channel, Number($(modeId).value), $(inputId).value);
+        if (result.ok) {
+            // The field now shows the scaler the controller holds, i.e. an absolute value. Leave the mode
+            // on Absolute so pressing Save again cannot multiply a Relative factor in a second time.
+            $(inputId).value = result.newValue;
+            $(modeId).value = '0';
+        }
+        $('scalerAck').textContent = result.message;
+        log(result.message, result.ok ? 'info' : 'error');
+    } catch (error) {
+        const message = `Scaler write failed: ${error.message}`;
+        $('scalerAck').textContent = message;
+        log(message, 'error');
+    } finally { setScalerBusy(false); }
 }));
 $('calibrateDisplayBtn').addEventListener('click', async () => { const result = await window.windTunnel.calibrateDisplay(); $('scalerAck').textContent = result.message; log(result.message, result.ok ? 'info' : 'error'); });
 

@@ -9,6 +9,10 @@ function setMainWindow(win) {
 
 const state = {
     connected: false,
+    // True while a port is open and being handshaken; `connected` only flips true once the controller has answered.
+    connecting: false,
+    // True when the link is up but the controller has been silent for a few seconds (watchdog warning).
+    linkDegraded: false,
     simulation: process.argv.includes('--simulate') || process.env.WIND_TUNNEL_SIMULATION === '1',
     port: null,
     apiVersion: API_VERSION,

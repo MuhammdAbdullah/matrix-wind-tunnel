@@ -28,6 +28,33 @@ function setLogsFolder(folder) {
     return { ok: true, logsFolder: folder };
 }
 
+// CSV header text (name + unit) per row-object field. Units match the chart axis labels in
+// experiments.js; "deg" rather than the degree sign keeps the file readable in Excel, which
+// misreads non-ASCII characters in a BOM-less UTF-8 CSV. Fields without a unit keep a plain name.
+const COLUMN_HEADERS = {
+    time: 'Time (UTC)',
+    fanSpeed: 'Fan Speed (%)',
+    angle: 'Angle (deg)',
+    aerofoilAngle: 'Aerofoil Angle (deg)',
+    lift: 'Lift (mN)',
+    drag: 'Drag (mN)',
+    pressure: 'Pressure (Pa)',
+    velocity: 'Velocity (m/s)',
+    tappingChannel: 'Tapping Channel',
+    dragShape: 'Drag Shape'
+};
+
+function headerFor(column) {
+    // Custom columns carry whichever fields the operator picked as X/Y at the time the header is written.
+    if (column === 'customX') return COLUMN_HEADERS[state.customAxes.x] || 'Custom X';
+    if (column === 'customY') return COLUMN_HEADERS[state.customAxes.y] || 'Custom Y';
+    return COLUMN_HEADERS[column] || column;
+}
+
+function headerLine() {
+    return activeColumns.map(headerFor).join(',');
+}
+
 function defaultLogName(experiment) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     return `Wind Tunnel ${experiment.title} ${timestamp}.csv`;
@@ -40,7 +67,7 @@ function startLog(experiment, filePath) {
     currentPath = target;
     currentStream = fs.createWriteStream(currentPath, { flags: 'a' });
     activeColumns = experiment.csvColumns;
-    currentStream.write(`${activeColumns.join(',')}\n`);
+    currentStream.write(`${headerLine()}\n`);
     rowCount = 0;
     state.logging = { active: true, path: currentPath, rowCount: 0, experimentId: experiment.id };
     publish();
@@ -52,7 +79,7 @@ function startLog(experiment, filePath) {
 // of either overwriting the file or re-prompting the save dialog each time.
 function startSweepBlock() {
     if (!currentStream) return;
-    currentStream.write(`\n\n${activeColumns.join(',')}\n`);
+    currentStream.write(`\n\n${headerLine()}\n`);
 }
 
 function appendRow(rowObject) {

@@ -21,7 +21,7 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
 
 | Area | Capability |
 |---|---|
-| **Connection** | Scans for the controller (USB VID `0x12BF`, PID `0xF010`), connects at `115200` baud, verifies API version `2`, and reconnects automatically after unplug/replug or read failures. |
+| **Connection** | Scans for the controller (USB VID `0x12BF`, PID `0xF010`), connects at `115200` baud, verifies API version `2`, and drops the link immediately on unplug and within 8 s if the controller stops answering, and reconnects automatically (rescanning by VID/PID). |
 | **Control** | Live lift (mN), drag (mN), pressure (Pa) and air velocity (m/s); fan speed `0â€“100 %`; motor angle `-180Â°â€¦180Â°`; zero sensors; zero motor; LED animation/ambient settings. |
 | **Experiments** | Eight experiments (pressure-to-velocity, pressure-tapped cylinder/aerofoil, lift, drag, stem racing, sensors vs time, custom X/Y), each with its own traces, axes and CSV columns. A live chart and an experiment-history chart are kept separate. |
 | **Sweeps** | Timed angle sweeps and fan-speed sweeps that move the actuator, wait for it to settle, read the sensors, log a point and advance. |
@@ -72,7 +72,7 @@ The production build shows "Searching for controllerâ€¦" and connects as soo
 
 **One source of truth.** `main/state.js` holds one `state` object. Every change calls `publish()`, which pushes the whole object to the renderer on `state:update`; the renderer re-derives all gauges, labels and charts from each snapshot.
 
-**Connection.** `serial.startAutoConnect()` polls `SerialPort.list()` every 2 s while disconnected. After connecting, the API version is read (`A`) and must equal `2`, otherwise the port is closed. A 1 s monitor plus consecutive failed sensor reads trigger reconnect with exponential back-off (`min(1000Â·2â¿, 8000)` ms). Intentional disconnects do not reconnect.
+**Connection.** `serial.startAutoConnect()` rescans `SerialPort.list()` every 2 s while disconnected and matches VID/PID each time, so a controller that comes back on a different COM number is found. After opening, the API version is read (`A`) and must equal `2` before the app reports Connected (a port that does not answer is closed). An unplug, port error or write failure drops the link immediately; a controller that stays enumerated but stops answering is detected by a watchdog (heartbeat when idle, "Not responding" after 3 s, link dropped after 8 s). Queued commands are discarded on loss so nothing replays onto the new session. A manual Disconnect is not treated as a fault, but the scanner reconnects within a couple of seconds.
 
 **Command queue.** `sendBinary()` chains every command onto one promise so only one command is ever in flight; each is retried on timeout, recorded in the TX/RX diagnostics and tagged with its source (`control`, `calibrator`, `system`) in the audit log.
 

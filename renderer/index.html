@@ -266,8 +266,22 @@
                     <article class="card bg-base-200 border border-base-300">
                         <div class="card-body">
                             <div class="panel-heading"><h2 class="card-title text-base">Velocity Lookup Table</h2><button id="refreshLut" class="btn btn-ghost btn-xs">Refresh</button></div>
-                            <div class="lut" id="lut"></div>
-                            <p id="lutAck" class="text-xs opacity-60">No write yet this session.</p>
+                            <p class="text-xs opacity-70 lut-help">With the fan stopped, click <strong>Zero Sensor</strong>. Then click <strong>Start capture</strong> to run the fan at 10%, wait for the pressure to settle and type it in the Pressure box. Press <strong>Enter</strong>: the pressure is converted to air speed with V = &radic;(2&middot;|&Delta;P| / &rho;) (&rho; = 1.20 kg/m&sup3;, CP0704 Worksheet 1) and the fan moves on to the next 10%. Enter after 100% stops the fan. You can click any Fan % to jump to it, or type a velocity directly. Nothing is sent to the controller until you press <strong>Save Table</strong>.</p>
+                            <div class="lut-capture">
+                                <button id="lutZero" class="btn btn-secondary btn-sm">Zero Sensor</button>
+                                <button id="lutStart" class="btn btn-secondary btn-sm">Start capture</button>
+                                <button id="lutStop" class="btn btn-error btn-sm">Stop fan</button>
+                                <div class="lut-live">
+                                    <div class="lut-live-item"><span class="lut-live-label">Live pressure</span><span class="lut-live-value"><strong id="lutLivePressure">-</strong> Pa</span></div>
+                                    <div class="lut-live-item"><span class="lut-live-label">Fan</span><span class="lut-live-value"><strong id="lutLiveFan">-</strong> %</span></div>
+                                </div>
+                            </div>
+                            <table class="lut-table">
+                                <thead><tr><th>Fan speed</th><th>Pressure (Pa)</th><th>Velocity (m/s)</th></tr></thead>
+                                <tbody id="lut"></tbody>
+                            </table>
+                            <div class="button-row"><button id="saveLut" class="btn btn-primary btn-sm">Save Table</button></div>
+                            <p id="lutAck" class="text-xs opacity-60 mt-2">No write yet this session.</p>
                         </div>
                     </article>
                     <article class="card bg-base-200 border border-base-300">

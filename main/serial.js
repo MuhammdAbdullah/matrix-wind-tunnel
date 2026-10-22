@@ -12,6 +12,15 @@ const MAX_RECONNECT_DELAY_MS = 8000;
 const READ_FAILURE_RECONNECT_THRESHOLD = 5;
 const MAX_FRAME_RETRIES = 2;
 const RESPONSE_COMMANDS = new Set([CMD.VERSION, CMD.READ_SENSORS, CMD.GET_SCALERS, CMD.GET_LUT]);
+const LUT_KEYS = Array.from({ length: 10 }, (_unused, index) => `vl${index}`);
+// A reply object only resolves the pending command if it carries that command's key; anything else
+// (e.g. the late second half of a getvlu reply after a retry) is a stray and is ignored.
+const RESPONSE_KEY = {
+    [CMD.VERSION]: 'version',
+    [CMD.READ_SENSORS]: 'pressure',
+    [CMD.GET_SCALERS]: 'sl',
+    [CMD.GET_LUT]: 'vl0'
+};
 
 let serialPort = null;
 let serialBuffer = Buffer.alloc(0);
@@ -61,7 +70,9 @@ function jsonRequestFor(command, payload) {
         };
         case CMD.SET_SCALER: return { senscch: payload[0], senscale: payload.readFloatLE(1), senscmode: payload[5] };
         case CMD.GET_SCALERS: return { getsensorscalers: 0 };
-        case CMD.SET_LUT: return { setvluchan: payload[0], setvluvel: payload.readFloatLE(1) };
+        // toFixed(6) matches the legacy calibrator's 6-decimal float encoding; a raw float32 widened to
+        // a double would be sent as e.g. 5.650000095367432.
+        case CMD.SET_LUT: return { setvluchan: payload[0], setvluvel: Number(payload.readFloatLE(1).toFixed(6)) };
         case CMD.GET_LUT: return { getvlu: 0 };
         case CMD.CALIBRATE_DISPLAY: return { calibratedisplay: 0 };
         case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4) };
@@ -168,8 +179,20 @@ function handleData(chunk) {
         jsonBuffer = jsonBuffer.slice(end + 1);
         if (!pendingCommand) continue;
         try {
-            const response = JSON.parse(text);
+            let response = JSON.parse(text);
             const request = pendingCommand;
+            if (request.command === CMD.GET_LUT) {
+                // V2.0.6 answers getvlu with two JSON objects (vl0-vl4, then vl5-vl9 about 5ms later),
+                // so keep waiting until all ten entries have arrived instead of resolving on the first.
+                // Either half may arrive first after a retry, so any vl* key is accepted into the merge.
+                if (!LUT_KEYS.some((key) => key in response)) continue;
+                request.partial = { ...request.partial, ...response };
+                if (!LUT_KEYS.every((key) => key in request.partial)) continue;
+                response = request.partial;
+            } else if (RESPONSE_KEY[request.command] && !(RESPONSE_KEY[request.command] in response)) {
+                console.log(`[serial] Ignoring stray JSON response while waiting for ${request.command}: ${text}`);
+                continue;
+            }
             pendingCommand = null;
             clearTimeout(request.timer);
             request.resolve(responseToPayload(request.command, response));

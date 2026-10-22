@@ -240,6 +240,7 @@ function render(value) {
     state.connected = value.connected;
     state.simulation = value.simulation;
     state.sweepRunning = value.sweep.running;
+    updateLutLive(value);
 
     const customAxesChanged = value.customAxes && (value.customAxes.x !== state.customAxes.x || value.customAxes.y !== state.customAxes.y);
     if (value.customAxes) state.customAxes = value.customAxes;
@@ -616,24 +617,137 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
 }));
 $('calibrateDisplayBtn').addEventListener('click', async () => { const result = await window.windTunnel.calibrateDisplay(); $('scalerAck').textContent = result.message; log(result.message, result.ok ? 'info' : 'error'); });
 
-async function refreshLut() {
+// Velocity lookup table. Each fan step's velocity is derived from a recorded pressure with
+// V = sqrt(2*|dP| / rho) (CP0704 Worksheet 1, rho = 1.20 kg/m3). Pressure is only a working value
+// in this table -- the controller stores just the ten velocities, written together by "Save Table".
+const AIR_DENSITY = 1.20;
+const LUT_STEPS = 10;
+let lutBusy = false;
+let lutDirty = false; // unsaved pressure/velocity entries that a re-read from the controller would discard
+
+function pressureToVelocity(pressure) {
+    return Math.sqrt((2 * Math.abs(pressure)) / AIR_DENSITY);
+}
+
+function formatVelocity(velocity) {
+    return Number.isFinite(velocity) ? String(Number(velocity.toFixed(2))) : '';
+}
+
+function renderLut(entries) {
+    lutDirty = false;
+    $('lut').innerHTML = entries.map((value, index) => `
+        <tr class="lut-row" data-index="${index}">
+            <td><button type="button" class="lut-step" data-index="${index}" title="Set the fan to ${(index + 1) * 10}%">Fan ${(index + 1) * 10}%</button></td>
+            <td><input type="number" step="any" class="input input-bordered input-sm lut-pressure" id="lutPressure${index}" data-index="${index}"></td>
+            <td><input type="number" step="0.01" min="0" class="input input-bordered input-sm lut-velocity" id="lutVelocity${index}" value="${formatVelocity(value)}"></td>        </tr>`).join('');
+}
+
+function setLutActive(index) {
+    document.querySelectorAll('.lut-row').forEach((row) => row.classList.toggle('lut-active', Number(row.dataset.index) === index));
+}
+
+function lutMessage(message, ok = true) {
+    $('lutAck').textContent = message;
+    log(message, ok ? 'info' : 'error');
+}
+
+async function setLutFan(percent) {
+    const result = await window.windTunnel.setLutFan(percent);
+    lutMessage(result.message, result.ok);
+    return result.ok;
+}
+
+async function selectLutStep(index) {
+    const ok = await setLutFan((index + 1) * 10);
+    if (ok) setLutActive(index);
+    return ok;
+}
+
+// Enter in a row's pressure box: the typed pressure is already converted to velocity by the input
+// handler, so just move the fan to the next 10% step -- or stop it after 100%.
+async function advanceLutStep(index) {
+    if (index < LUT_STEPS - 1) {
+        if (await selectLutStep(index + 1)) $(`lutPressure${index + 1}`).focus();
+        return;
+    }
+    if (await setLutFan(0)) {
+        setLutActive(null);
+        lutMessage('Fan stopped. Check the table, then press Save Table to send it to the controller.');
+    }
+}
+
+const LUT_ACTION_BUTTONS = '.lut-step, #lutStart, #lutStop, #lutZero, #saveLut';
+
+// Runs one fan/sensor action at a time so a double-click cannot interleave two of them.
+async function runLutAction(action) {
+    if (lutBusy) return;
+    lutBusy = true;
+    document.querySelectorAll(LUT_ACTION_BUTTONS).forEach((button) => { button.disabled = true; });
+    try { await action(); }
+    catch (error) { lutMessage(`Velocity table action failed: ${error.message}`, false); }
+    finally {
+        lutBusy = false;
+        document.querySelectorAll(LUT_ACTION_BUTTONS).forEach((button) => { button.disabled = false; });
+    }
+}
+
+// `manual` is the Refresh button; opening the tab only re-reads when nothing unsaved would be lost.
+async function refreshLut({ manual = false } = {}) {
+    if (lutBusy) return;
+    if (lutDirty && (!manual || !confirm('Re-read the table from the controller? Unsaved pressure and velocity entries will be lost.'))) return;
     try {
         const entries = await window.windTunnel.getLut();
-        $('lut').innerHTML = entries.map((value, index) => `
-            <label>Fan ${(index + 1) * 10}%
-                <input type="number" step="0.01" class="input input-bordered input-sm w-20" id="lutInput${index}" value="${Number.isFinite(value) ? value : ''}">
-                <button class="btn btn-outline btn-xs lut-save" data-index="${index}">Save</button>
-            </label>`).join('');
-        document.querySelectorAll('.lut-save').forEach((button) => button.addEventListener('click', async () => {
-            const index = Number(button.dataset.index);
-            const result = await window.windTunnel.setLutEntry(index, Number($(`lutInput${index}`).value));
-            if (result.ok) $(`lutInput${index}`).value = result.newValue;
-            $('lutAck').textContent = result.message;
-            log(result.message, result.ok ? 'info' : 'error');
-        }));
+        renderLut(entries);
     } catch (error) { log(`Could not read velocity LUT: ${error.message}`, 'error'); }
 }
-$('refreshLut').addEventListener('click', refreshLut);
+
+function updateLutLive(value) {
+    $('lutLivePressure').textContent = Number.isFinite(value.sensors?.pressure) ? value.sensors.pressure.toFixed(1) : '-';
+    $('lutLiveFan').textContent = value.fanSpeed;
+}
+
+$('lut').addEventListener('input', (event) => {
+    lutDirty = true;
+    if (event.target.classList.contains('lut-pressure')) {
+        const pressure = event.target.value === '' ? NaN : Number(event.target.value);
+        if (Number.isFinite(pressure)) $(`lutVelocity${event.target.dataset.index}`).value = formatVelocity(pressureToVelocity(pressure));
+    } else if (event.target.classList.contains('lut-velocity')) {
+        // A hand-typed velocity no longer matches any recorded pressure, so drop the stale one.
+        $(`lutPressure${event.target.id.replace('lutVelocity', '')}`).value = '';
+    }
+});
+$('lut').addEventListener('click', (event) => {
+    const step = event.target.closest('.lut-step');
+    if (step) runLutAction(() => selectLutStep(Number(step.dataset.index)));
+});
+$('lut').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || !event.target.classList.contains('lut-pressure')) return;
+    event.preventDefault();
+    const index = Number(event.target.dataset.index);
+    if (event.target.value === '' || !Number.isFinite(Number(event.target.value))) {
+        lutMessage(`Type the pressure for Fan ${(index + 1) * 10}% first, then press Enter.`, false);
+        return;
+    }
+    runLutAction(() => advanceLutStep(index));
+});
+$('lutZero').addEventListener('click', () => runLutAction(async () => {
+    const result = await window.windTunnel.zeroSensors();
+    lutMessage(result.message, result.ok);
+}));
+$('lutStart').addEventListener('click', () => runLutAction(() => selectLutStep(0)));
+$('lutStop').addEventListener('click', () => runLutAction(async () => { await setLutFan(0); setLutActive(null); }));
+$('saveLut').addEventListener('click', () => runLutAction(async () => {
+    const velocities = Array.from({ length: LUT_STEPS }, (_unused, index) => {
+        const raw = $(`lutVelocity${index}`).value;
+        return raw === '' ? null : Number(raw);
+    });
+    const result = await window.windTunnel.setLutTable(velocities);
+    lutMessage(result.message, result.acknowledged);
+    // Only a controller-confirmed table replaces what was typed; on any failure the operator's values stay put.
+    if (result.acknowledged) { result.entries.forEach((entry, index) => { $(`lutVelocity${index}`).value = formatVelocity(entry); }); lutDirty = false; }
+}));
+$('refreshLut').addEventListener('click', () => refreshLut({ manual: true }));
+renderLut(Array(LUT_STEPS).fill(NaN));
 
 $('saveNetwork').addEventListener('click', async () => {
     const [ip0, ip1, ip2, ip3] = $('networkIp').value.split('.').map((part) => Number(part) || 0);

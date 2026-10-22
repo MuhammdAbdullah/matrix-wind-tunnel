@@ -16,7 +16,10 @@ npm start            # Electron desktop app — auto-scans for real USB hardware
 npm run simulate      # Electron with --simulate flag (synthetic sensor data, no hardware needed)
 npm run dev           # Electron with --dev flag
 npm run build-win     # electron-builder Windows NSIS installer -> dist/
+npm run rebuild-hid   # electron-rebuild node-hid against Electron's ABI (needed after npm install / Electron bump if HID fails to load)
 ```
+
+`build-mac` / `build-linux` also exist; `.github/workflows/release.yml` builds all three platforms on `v*` tags (or manual dispatch). Linux needs the udev rules in `docs/99-wind-tunnel.rules` (VID `0x12BF`) installed for serial/HID access.
 
 There is no automated test suite and no lint config. Verify changes by running `npm run simulate` (no hardware) or `npm start` against a real controller, and by manual checks against `../AGENTS.md`'s protocol/behavior tables.
 
@@ -36,11 +39,14 @@ main/
   admin.js         Password hash (scrypt + salt) storage, unlock/lock with a 10-minute session timeout
   experiments.js   The 8-experiment declarative table + drag-shape list + sweep defaults
   sweeps.js        Sensor-sample timer, angle/fan sweep timers, tapping auto-advance
-  calibration.js   Scaler/LUT/display/network writes, gated on admin unlocked + sweep idle
+  calibration.js   Scaler/LUT/display/network writes plus the LUT fan-step/pressure-capture helpers,
+                   gated on admin unlocked + sweep idle
   bootloader.js    HID bootloader transport + protocol (SOH/EOT/DLE framing, CRC-16,
                    Intel HEX parsing, erase/program/verify/run) -- see "Bootloader protocol"
   firmware.js      Thin orchestration over bootloader.js -- see "Bootloader protocol" below
   logging.js       CSV experiment logging to a configurable Logs folder
+  updater.js       electron-updater against GitHub releases (check -> "Download?" dialog -> "Restart?" dialog),
+                   wired in `main.js` via `updater.init(...)`; autoDownload/autoInstallOnAppQuit are off on purpose
 preload.js         contextBridge surface — exposes window.windTunnel.* (~40 methods) to the renderer only
 renderer/
   index.html       Single-page shell: sidebar nav switches `.view` sections (control/calibrator/admin)
@@ -98,7 +104,8 @@ Each experiment is exactly one of three logging shapes, matching the legacy Flow
   - Firmware actions (`checkDevice`/`connect`/`loadHex`/`readInfo`/`erase`/`program`/`readCrc`/`jumpToApp`, exposed as `admin:bootloaderCheckDevice`/`admin:bootloaderConnect`/`admin:bootloaderLoadHex`/`admin:bootloaderReadInfo`/`admin:bootloaderErase`/`admin:bootloaderProgram`/`admin:bootloaderReadCrc`/`admin:bootloaderJumpToApp`/`admin:bootloaderDisconnect`) all require `admin.isUnlocked()` first (`main/firmware.js`'s `guarded()` wrapper, the same role its old `guard()` played), per `../AGENTS.md`'s requirement that device detection, erase, programming, and verification each need password confirmation — Process Control V2 has no such gate; it is layered on top of the ported logic. The renderer drives a Connect/Disconnect toggle (`#connectBtn`) and a client-side Erase→Program→Verify sequence (`#eraseProgramVerify`'s click handler in `renderer/app.js`, mirroring Process Control V2's `eraseProgramVerify()`) rather than a single generic action dispatch. Windows UAC elevation for erase/program is still the pre-existing stub in `main.js` (`admin:requestElevation` always declines) — that part of `../AGENTS.md`'s firmware-flashing requirement is not wired up yet; don't assume elevation is enforced.
   - There is no confirmed software command to put the running application into bootloader mode — the Flowcode firmware source documents only a touchscreen "Bootloader" menu entry (a physical action on the device), not a serial/JSON command, so the Admin UI does not attempt to trigger bootloader mode remotely; the operator must do it on the device.
   - None of this has been exercised against real hardware (no automated test suite, no bootloader-mode device available during implementation) — static syntax checks and a `--simulate` boot pass, but hardware-in-the-loop verification of erase/program/verify/run is still required before relying on it.
-- Calibration writes that have a hardware readback command (`H`→`I` for scalers, `J`→`K` for LUT) re-read immediately after writing and return the hardware-confirmed value — the UI must only show a value as saved after `acknowledged: true` comes back, never optimistically.
+- Calibration writes that have a hardware readback command are confirmed by reading back, and the UI must only show a value as saved after `acknowledged: true` comes back, never optimistically. Scalers (`H`→`I`) re-read right after the write. The velocity LUT is different: `setLutTable` writes all ten `J` entries (50 ms apart), waits 150 ms, then does ONE `K` read-back and is `acknowledged` only if every entry matches within 0.011 (firmware reports 2 dp). Never save/read back entry-by-entry: V2.0.6 answers `getvlu` with TWO JSON objects (`vl0`–`vl4`, then `vl5`–`vl9` ~5 ms later) which `serial.js` merges, and an immediate read returned stale/NaN entries that overwrote the operator's typed values. `serial.js` also ignores any reply object that lacks the pending command's key, so a late half of a `getvlu` reply cannot resolve another command. On a failed or mismatched save the renderer keeps what the operator typed.
+- Admin LUT card: per fan step a Pressure (Pa) → Velocity (m/s) row; Zero Sensor (reuses `device:zeroSensors`), Start capture, and an operator-typed pressure per row: Enter converts it to velocity and the renderer moves the fan to the next 10 % via `calibration:setLutFan` (Enter after 100 % stops the fan); clicking a "Fan N%" label jumps the fan to that step. A single Save Table sends everything. Velocity = √(2·|P|/ρ), ρ = 1.20 kg/m³ (`AIR_DENSITY` in `renderer/app.js`, from `../CP0704-Aerodynamics.pdf` Worksheet 1; `../Wind tunnel - Test Results report.pdf` used 1.225). Pressure is renderer-only working data — only the ten velocities go to the controller. `setLutFan(0)` is exempt from the admin gate so an expired session can never strand a running fan.
 
 ### Renderer conventions
 

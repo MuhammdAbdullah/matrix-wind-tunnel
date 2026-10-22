@@ -1,4 +1,4 @@
-# Wind Tunnel
+﻿# Wind Tunnel
 
 Windows Electron desktop application for the Matrix Wind Tunnel. It combines the former **Wind Tunnel Control** and **Wind Tunnel Calibrator** tools in one app: live sensor readout, fan and angle control, the 8-experiment suite with angle/fan sweeps and CSV logging, scaler/velocity-LUT calibration, and Admin-gated firmware (bootloader) updates.
 
@@ -22,11 +22,11 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
 | Area | Capability |
 |---|---|
 | **Connection** | Scans for the controller (USB VID `0x12BF`, PID `0xF010`), connects at `115200` baud, verifies API version `2`, and reconnects automatically after unplug/replug or read failures. |
-| **Control** | Live lift (mN), drag (mN), pressure (Pa) and air velocity (m/s); fan speed `0–100 %`; motor angle `-180°…180°`; zero sensors; zero motor; LED animation/ambient settings. |
+| **Control** | Live lift (mN), drag (mN), pressure (Pa) and air velocity (m/s); fan speed `0â€“100 %`; motor angle `-180Â°â€¦180Â°`; zero sensors; zero motor; LED animation/ambient settings. |
 | **Experiments** | Eight experiments (pressure-to-velocity, pressure-tapped cylinder/aerofoil, lift, drag, stem racing, sensors vs time, custom X/Y), each with its own traces, axes and CSV columns. A live chart and an experiment-history chart are kept separate. |
 | **Sweeps** | Timed angle sweeps and fan-speed sweeps that move the actuator, wait for it to settle, read the sensors, log a point and advance. |
 | **Logging** | CSV files (`WindTunnelLog_<timestamp>.csv` style) in a configurable folder; the save location is asked once per experiment. |
-| **Admin** | Password-gated area (10-minute session) with diagnostics (raw TX/RX, retry/error counters, activity log), sensor scalers, 10-point velocity LUT, display calibration, network IP/port, HID bootloader firmware update, app-update status and an audit trail. |
+| **Admin** | Password-gated area (10-minute session) with diagnostics (raw TX/RX, retry/error counters, activity log), sensor scalers, 10-point velocity LUT (guided 10 %-step pressure capture converted to air speed, saved with one Save Table button), display calibration, network IP/port, HID bootloader firmware update, app-update status and an audit trail. |
 | **Simulation** | `--simulate` replaces the hardware with synthetic sensor data for development without a tunnel. |
 
 ## Getting started
@@ -42,29 +42,29 @@ npm run build-win     # electron-builder Windows NSIS installer -> dist/
 npm run rebuild-hid   # rebuild the native node-hid module against Electron's ABI
 ```
 
-The production build shows "Searching for controller…" and connects as soon as the approved device appears. Simulation is opt-in only (`npm run simulate`, or `WIND_TUNNEL_SIMULATION=1`). There is no automated test suite — verify changes with `npm run simulate` and/or against real hardware. DevTools: `Ctrl+Shift+I`.
+The production build shows "Searching for controllerâ€¦" and connects as soon as the approved device appears. Simulation is opt-in only (`npm run simulate`, or `WIND_TUNNEL_SIMULATION=1`). There is no automated test suite â€” verify changes with `npm run simulate` and/or against real hardware. DevTools: `Ctrl+Shift+I`.
 
 ## How it works
 
 ```
-┌─────────────────────────── Renderer (renderer/) ───────────────────────────┐
-│ index.html + app.js + charts.js (Chart.js)   no framework, no bundler       │
-│        calls window.windTunnel.*      ▲ receives state:update etc.          │
-└────────────────┬────────────────────────┴───────────────────────────────────┘
-                 │ contextBridge (preload.js)  — contextIsolation on, nodeIntegration off
-┌────────────────▼───────────────────────────────────────────────────────────┐
-│ main.js — window creation + ipcMain.handle wiring                           │
-│  main/state.js        single shared state, publish() → renderer             │
-│  main/serial.js       SerialPort transport, command queue, auto-connect     │
-│  main/protocol.js     binary framing  ':' cmd payload ';\n'                 │
-│  main/experiments.js  declarative 8-experiment table                        │
-│  main/sweeps.js       sensor-sample timer, angle/fan sweeps, Log Point      │
-│  main/logging.js      CSV output                                            │
-│  main/calibration.js  scalers / LUT / display / network (Admin-gated)       │
-│  main/admin.js        scrypt password hash, 10-minute session               │
-│  main/bootloader.js   HID bootloader protocol  ─ main/firmware.js (gated)   │
-└────────────────┬───────────────────────────────────────────────────────────┘
-                 │ USB serial 115200 baud            USB HID (bootloader mode)
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Renderer (renderer/) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ index.html + app.js + charts.js (Chart.js)   no framework, no bundler       â”‚
+â”‚        calls window.windTunnel.*      â–² receives state:update etc.          â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                 â”‚ contextBridge (preload.js)  â€” contextIsolation on, nodeIntegration off
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ main.js â€” window creation + ipcMain.handle wiring                           â”‚
+â”‚  main/state.js        single shared state, publish() â†’ renderer             â”‚
+â”‚  main/serial.js       SerialPort transport, command queue, auto-connect     â”‚
+â”‚  main/protocol.js     binary framing  ':' cmd payload ';\n'                 â”‚
+â”‚  main/experiments.js  declarative 8-experiment table                        â”‚
+â”‚  main/sweeps.js       sensor-sample timer, angle/fan sweeps, Log Point      â”‚
+â”‚  main/logging.js      CSV output                                            â”‚
+â”‚  main/calibration.js  scalers / LUT / display / network (Admin-gated)       â”‚
+â”‚  main/admin.js        scrypt password hash, 10-minute session               â”‚
+â”‚  main/bootloader.js   HID bootloader protocol  â”€ main/firmware.js (gated)   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                 â”‚ USB serial 115200 baud            USB HID (bootloader mode)
             Wind Tunnel controller (firmware V2.0.6)
 ```
 
@@ -72,13 +72,13 @@ The production build shows "Searching for controller…" and connects as soon as
 
 **One source of truth.** `main/state.js` holds one `state` object. Every change calls `publish()`, which pushes the whole object to the renderer on `state:update`; the renderer re-derives all gauges, labels and charts from each snapshot.
 
-**Connection.** `serial.startAutoConnect()` polls `SerialPort.list()` every 2 s while disconnected. After connecting, the API version is read (`A`) and must equal `2`, otherwise the port is closed. A 1 s monitor plus consecutive failed sensor reads trigger reconnect with exponential back-off (`min(1000·2ⁿ, 8000)` ms). Intentional disconnects do not reconnect.
+**Connection.** `serial.startAutoConnect()` polls `SerialPort.list()` every 2 s while disconnected. After connecting, the API version is read (`A`) and must equal `2`, otherwise the port is closed. A 1 s monitor plus consecutive failed sensor reads trigger reconnect with exponential back-off (`min(1000Â·2â¿, 8000)` ms). Intentional disconnects do not reconnect.
 
 **Command queue.** `sendBinary()` chains every command onto one promise so only one command is ever in flight; each is retried on timeout, recorded in the TX/RX diagnostics and tagged with its source (`control`, `calibrator`, `system`) in the audit log.
 
 **Sensor polling.** A 1 s timer reads sensors (`C`) and publishes. While a sweep runs, the sweep tick does the read itself so no duplicate round-trips occur.
 
-**Sweeps.** `sweep:startAngle` / `sweep:startFan` first make sure a CSV is open (asking for a save location once per experiment; repeated sweeps of the same experiment append as blank-line-separated blocks). Each tick moves to the current value, waits a settle delay (scaled by how far the actuator travelled), reads sensors, logs a row, then steps toward `end`. A sweep stops at `end` and resets to `start` — it never reverses or loops — and stops on unexpected disconnect.
+**Sweeps.** `sweep:startAngle` / `sweep:startFan` first make sure a CSV is open (asking for a save location once per experiment; repeated sweeps of the same experiment append as blank-line-separated blocks). Each tick moves to the current value, waits a settle delay (scaled by how far the actuator travelled), reads sensors, logs a row, then steps toward `end`. A sweep stops at `end` and resets to `start` â€” it never reverses or loops â€” and stops on unexpected disconnect.
 
 **Logging shapes.** Each experiment logs in exactly one way:
 
@@ -92,7 +92,7 @@ Values are the controller's raw floats; drag shape and tapping channel are metad
 
 **Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
-**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it (the approved firmware has no serial command for this, unlike Process Control's `{"BL":1}`), so the Trigger Bootloader button stays disabled. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. The approved image name is derived from `APPROVED_FIRMWARE_VERSION` in `main/firmware.js` (`WindTunnel V<x.y.z>.hex`) and a warning is logged if a different file is loaded. See `CLAUDE.md` for the full details and known caveats.
+**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect â†’ read info â†’ erase â†’ program (10 records per exchange) â†’ CRC verify â†’ run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin â†’ Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it (the approved firmware has no serial command for this, unlike Process Control's `{"BL":1}`), so the Trigger Bootloader button stays disabled. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. The approved image name is derived from `APPROVED_FIRMWARE_VERSION` in `main/firmware.js` (`WindTunnel V<x.y.z>.hex`) and a warning is logged if a different file is loaded. See `CLAUDE.md` for the full details and known caveats.
 
 ## Experiments
 
@@ -107,7 +107,7 @@ Values are the controller's raw floats; drag shape and tapping channel are metad
 | `sensorsVsTime` | Sensors vs Time | continuous | time, fanSpeed, lift, drag, pressure |
 | `custom` | Custom | manual | time, customX, customY |
 
-Sweep defaults: angle `-20 → 45°` step `5°`, fan `0 → 60 %` step `10`, delay `5000 ms` (minimum `100 ms`). Drag shapes: Flat Surface, Cone, Tear Drop, Rough Ball, Semi Sphere, Smooth Ball. Tapping channels run `1–23` and wrap `23 → 1`.
+Sweep defaults: angle `-20 â†’ 45Â°` step `5Â°`, fan `0 â†’ 60 %` step `10`, delay `5000 ms` (minimum `100 ms`). Drag shapes: Flat Surface, Cone, Tear Drop, Rough Ball, Semi Sphere, Smooth Ball. Tapping channels run `1â€“23` and wrap `23 â†’ 1`.
 
 ## API reference
 
@@ -123,9 +123,9 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `listPorts()` | `device:listPorts` | Available serial ports. |
 | `connectPort(port, baudRate = 115200)` | `device:connectPort` | Connect and verify API version `2`. |
 | `disconnect()` | `device:disconnect` | Close the port without auto-reconnect. |
-| `setFanSpeed(value)` | `device:setFanSpeed` | Fan percent, clamped `0–100`. |
-| `setAngle(value)` | `device:setAngle` | Motor angle, clamped `-180…180`. |
-| `setLeds({ animMode, animColor, ambMode, ambColor })` | `device:setLeds` | Animation mode `0–4`, ambient mode `0–3`, colours `{r,g,b}` `0–255`. |
+| `setFanSpeed(value)` | `device:setFanSpeed` | Fan percent, clamped `0â€“100`. |
+| `setAngle(value)` | `device:setAngle` | Motor angle, clamped `-180â€¦180`. |
+| `setLeds({ animMode, animColor, ambMode, ambColor })` | `device:setLeds` | Animation mode `0â€“4`, ambient mode `0â€“3`, colours `{r,g,b}` `0â€“255`. |
 | `zeroSensors()` | `device:zeroSensors` | Zero the Wheatstone-bridge sensors. |
 | `zeroMotor()` | `device:zeroMotor` | Zero the motor angle. |
 | `sendCommand(command, payload[])` | `device:sendCommand` | Raw binary command (diagnostics). |
@@ -137,14 +137,14 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 |---|---|---|
 | `listExperiments()` | `experiment:list` | `{ experiments, dragShapes }`. |
 | `selectExperiment(id)` | `experiment:select` | Select an experiment; ends the open log if it belongs to a different one and resets tapping/aerofoil/angle-increment. |
-| `setTapping(channel)` | `experiment:setTapping` | Tapping channel `1–23`. |
-| `setAerofoilAngle(value)` | `experiment:setAerofoilAngle` | Aerofoil angle of attack, `-45…45`. |
-| `setManualAngleIncrement(inc)` | `experiment:setManualAngleIncrement` | Cylinder increment, `0–45`. |
-| `setFanSpeedIncrement(inc)` | `experiment:setFanSpeedIncrement` | Fan increment per logged point, `0–25` (wraps `100 → 0`). |
+| `setTapping(channel)` | `experiment:setTapping` | Tapping channel `1â€“23`. |
+| `setAerofoilAngle(value)` | `experiment:setAerofoilAngle` | Aerofoil angle of attack, `-45â€¦45`. |
+| `setManualAngleIncrement(inc)` | `experiment:setManualAngleIncrement` | Cylinder increment, `0â€“45`. |
+| `setFanSpeedIncrement(inc)` | `experiment:setFanSpeedIncrement` | Fan increment per logged point, `0â€“25` (wraps `100 â†’ 0`). |
 | `setStemRacingChartType(type)` | `experiment:setStemRacingChartType` | `0` vs Time, `1` vs Air Speed, `2` vs Fan Speed (display label only). |
 | `setCustomAxes(xField, yField)` | `experiment:setCustomAxes` | Axes for the Custom experiment. |
 | `setDragShape(shape)` | `experiment:setDragShape` | One of the drag shapes. |
-| `logPoint()` | `experiment:logPoint` | Capture one point for a manual experiment → `{ ok, row }`. |
+| `logPoint()` | `experiment:logPoint` | Capture one point for a manual experiment â†’ `{ ok, row }`. |
 
 **Sweeps**
 
@@ -160,7 +160,7 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | Method | IPC channel | Description |
 |---|---|---|
 | `startLog()` | `log:start` | Opens a save dialog, then starts a CSV for the selected experiment. |
-| `stopLog()` | `log:stop` | Closes the file → `{ ok, rowCount, path }`. |
+| `stopLog()` | `log:stop` | Closes the file â†’ `{ ok, rowCount, path }`. |
 | `getLogStatus()` | `log:status` | `{ active, path, rowCount, experimentId, logsFolder }`. |
 | `setLogFolder(folder)` | `log:setFolder` | Persist the default Logs folder. |
 
@@ -170,8 +170,9 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 |---|---|---|
 | `getScalers()` | `calibration:getScalers` | `{ lift, drag, pressure }`. |
 | `setScaler(channel, mode, value)` | `calibration:setScaler` | Channel `0` lift, `1` drag, `2` pressure; mode `0` absolute, `1` relative. Returns `{ ok, acknowledged, message, newValue }` after read-back. |
-| `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %…100 %). |
-| `setLutEntry(index, velocity)` | `calibration:setLutEntry` | Index `0–9`, velocity in m/s, with read-back. |
+| `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %â€¦100 %). |
+| `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %â€¦100 %, each 0â€“100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
+| `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0â€“100) for the pressure capture. Admin-gated except for 0 % (stop). |
 | `calibrateDisplay()` | `calibration:calibrateDisplay` | Run touchscreen calibration. |
 | `setNetwork(ip0, ip1, ip2, ip3, port)` | `calibration:setNetwork` | Store IP and port on the controller. |
 
@@ -181,10 +182,10 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 |---|---|---|
 | `adminStatus()` | `admin:status` | `{ configured, unlocked, secureStorage }`. |
 | `setupAdmin(password)` | `admin:setup` | First-time password (min. 8 characters); unlocks. |
-| `verifyAdmin(password)` | `admin:verify` | Unlock for 10 minutes → `{ ok }` or `{ ok: false, needsSetup: true }`. |
+| `verifyAdmin(password)` | `admin:verify` | Unlock for 10 minutes â†’ `{ ok }` or `{ ok: false, needsSetup: true }`. |
 | `lockAdmin()` | `admin:lock` | End the session. |
 | `getAuditLog()` | `admin:getAuditLog` | Last 50 audit entries. |
-| `requestElevation()` | `admin:requestElevation` | Stub — always declines (UAC elevation not wired up yet). |
+| `requestElevation()` | `admin:requestElevation` | Stub â€” always declines (UAC elevation not wired up yet). |
 | `getFirmwareInfo()` | `admin:firmwareInfo` | `{ approvedImage, version }` for the Admin label. |
 | `bootloaderPickHex()` | `admin:bootloaderPickHex` | Native file dialog; returns the chosen path or `null`. |
 | `bootloaderCheckDevice(vid, pid)` | `admin:bootloaderCheckDevice` | `{ ok, present }`. |
@@ -197,7 +198,7 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `bootloaderReadCrc()` | `admin:bootloaderReadCrc` | Verify device CRC against the hex. |
 | `bootloaderJumpToApp()` | `admin:bootloaderJumpToApp` | Run the application. |
 
-Every firmware call returns `{ ok, stage, message, … }`; a locked Admin session yields `{ ok: false, reason: 'admin-locked' }`.
+Every firmware call returns `{ ok, stage, message, â€¦ }`; a locked Admin session yields `{ ok: false, reason: 'admin-locked' }`.
 
 ### Push events
 
@@ -220,18 +221,18 @@ USB serial, `115200` baud. Request frame: `':' + command byte + payload + ';' + 
 
 | Cmd | TX payload | Operation | RX data |
 |---|---|---|---|
-| `A` | – | Read API version | 1 byte (must be `2`) |
-| `B` | 1 byte | Set fan speed `0–100` | ack |
-| `C` | – | Read sensors | 4 × float32 LE: lift, drag, pressure, velocity |
+| `A` | â€“ | Read API version | 1 byte (must be `2`) |
+| `B` | 1 byte | Set fan speed `0â€“100` | ack |
+| `C` | â€“ | Read sensors | 4 Ã— float32 LE: lift, drag, pressure, velocity |
 | `D` | int16 LE | Set motor angle | ack |
 | `E` | 9 bytes | Set LEDs | ack |
-| `F` | – | Zero sensors | ack |
-| `G` | – | Zero motor | ack |
+| `F` | â€“ | Zero sensors | ack |
+| `G` | â€“ | Zero motor | ack |
 | `H` | channel, float32, mode | Set sensor scaler | ack |
-| `I` | – | Read scalers | 3 × float32 |
+| `I` | â€“ | Read scalers | 3 Ã— float32 |
 | `J` | index, float32 | Set LUT entry | ack |
-| `K` | – | Read LUT | 10 × float32 |
-| `L` | – | Calibrate display | ack |
+| `K` | â€“ | Read LUT | 10 Ã— float32 |
+| `L` | â€“ | Calibrate display | ack |
 | `M` | 4 IP bytes, uint16 LE port | Store network address | ack |
 
 The command set is defined by the approved firmware (`WindTunnel V2.0.6`) and must not be extended from this app.
@@ -242,11 +243,18 @@ Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt
 
 ## Safety and Git boundary
 
-Do not modify or reflash firmware during normal UI development. Firmware flashing and calibration writes are Admin-gated and need explicit confirmation. The bootstrap password must never be committed, embedded or logged. The bootloader's USB PID is not yet hardware-confirmed — see `CLAUDE.md` before relying on firmware updates.
+Do not modify or reflash firmware during normal UI development. Firmware flashing and calibration writes are Admin-gated and need explicit confirmation. The bootstrap password must never be committed, embedded or logged. The bootloader's USB PID is not yet hardware-confirmed â€” see `CLAUDE.md` before relying on firmware updates.
 
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### v0.1.5
+
+- Fix: Admin â†’ Velocity Lookup Table no longer reverts typed values to stale numbers or shows blank entries for 60â€“100 %. The controller answers `getvlu` as two JSON objects (`vl0`â€“`vl4`, then `vl5`â€“`vl9`); the app now merges both, and no longer reads the table straight back after each single-entry write.
+- Change: one **Save Table** button writes all ten entries and verifies them with a single read-back; typed values are kept if the controller does not confirm.
+- New: the velocity LUT is built from pressure. **Zero Sensor** zeroes the sensors, **Start capture** runs the fan at 10 %, and typing the pressure (Pa) for a step and pressing **Enter** converts it to air speed with V = âˆš(2Â·|Î”P| / Ï), Ï = 1.20 kg/mÂ³ (CP0704 Worksheet 1) and moves the fan to the next 10 % (Enter after 100 % stops the fan); velocity can still be typed directly.
+- API: removed `setLutEntry`; added `setLutTable`, `setLutFan`.
 
 ### v0.1.4
 

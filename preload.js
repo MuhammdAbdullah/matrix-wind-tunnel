@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+﻿const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('windTunnel', {
     getState: () => ipcRenderer.invoke('device:getState'),
@@ -36,8 +36,9 @@ contextBridge.exposeInMainWorld('windTunnel', {
 
     setScaler: (channel, mode, value) => ipcRenderer.invoke('calibration:setScaler', { channel, mode, value }),
     getScalers: () => ipcRenderer.invoke('calibration:getScalers'),
-    setLutEntry: (index, velocity) => ipcRenderer.invoke('calibration:setLutEntry', { index, velocity }),
+    setLutTable: (velocities) => ipcRenderer.invoke('calibration:setLutTable', { velocities }),
     getLut: () => ipcRenderer.invoke('calibration:getLut'),
+    setLutFan: (percent) => ipcRenderer.invoke('calibration:setLutFan', { percent }),
     calibrateDisplay: () => ipcRenderer.invoke('calibration:calibrateDisplay'),
     setNetwork: (ip0, ip1, ip2, ip3, port) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port }),
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 
 const { state, setMainWindow, publish, audit, simulateSensors } = require('./main/state');
@@ -166,8 +166,9 @@ ipcMain.handle('experiment:logPoint', () => sweeps.logPoint());
 
 ipcMain.handle('calibration:setScaler', (_event, payload) => calibration.setScaler(payload));
 ipcMain.handle('calibration:getScalers', () => calibration.getScalers());
-ipcMain.handle('calibration:setLutEntry', (_event, payload) => calibration.setLutEntry(payload));
+ipcMain.handle('calibration:setLutTable', (_event, payload) => calibration.setLutTable(payload));
 ipcMain.handle('calibration:getLut', () => calibration.getLut());
+ipcMain.handle('calibration:setLutFan', (_event, payload) => calibration.setLutFan(payload));
 ipcMain.handle('calibration:calibrateDisplay', () => calibration.calibrateDisplay());
 ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
 

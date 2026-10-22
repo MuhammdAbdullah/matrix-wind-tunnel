@@ -241,6 +241,7 @@ function render(value) {
     state.simulation = value.simulation;
     state.sweepRunning = value.sweep.running;
     updateLutLive(value);
+    updateScalerLive(value);
 
     const customAxesChanged = value.customAxes && (value.customAxes.x !== state.customAxes.x || value.customAxes.y !== state.customAxes.y);
     if (value.customAxes) state.customAxes = value.customAxes;
@@ -731,6 +732,16 @@ async function refreshLut({ manual = false } = {}) {
         const entries = await window.windTunnel.getLut();
         renderLut(entries);
     } catch (error) { log(`Could not read velocity LUT: ${error.message}`, 'error'); }
+}
+
+// Live sensor readings beside each scaler, so a scaler can be judged against the sensor as it is changed.
+// Dashes until a real reading has arrived (sensors are 0 defaults before that) or while disconnected.
+function updateScalerLive(value) {
+    const live = value.connected && value.sensorSampleSeq > 0 ? value.sensors : null;
+    const show = (id, reading, decimals) => { $(id).textContent = live && Number.isFinite(reading) ? reading.toFixed(decimals) : '-'; };
+    show('liftLive', live?.lift, 1);
+    show('dragLive', live?.drag, 1);
+    show('pressureLive', live?.pressure, 2);
 }
 
 function updateLutLive(value) {

@@ -169,7 +169,7 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | Method | IPC channel | Description |
 |---|---|---|
 | `getScalers()` | `calibration:getScalers` | `{ lift, drag, pressure }`. |
-| `setScaler(channel, mode, value)` | `calibration:setScaler` | Channel `0` lift, `1` drag, `2` pressure; mode `0` absolute, `1` relative. Returns `{ ok, acknowledged, message, newValue }` after read-back. |
+| `setScaler(channel, mode, value)` | `calibration:setScaler` | Channel `0` lift, `1` drag, `2` pressure; mode `0` absolute, `1` relative. Value is the typed factor (Absolute replaces the scaler, Relative multiplies it). Returns `{ ok, acknowledged, message, oldValue, newValue }` after read-back. |
 | `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %â€¦100 %). |
 | `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %â€¦100 %, each 0â€“100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
 | `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0â€“100) for the pressure capture. Admin-gated except for 0 % (stop). |
@@ -248,6 +248,22 @@ Do not modify or reflash firmware during normal UI development. Firmware flashin
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### v0.1.7
+
+- New: Admin > Calibrator > Sensor Scalers now shows the **live lift (mN), drag (mN) and pressure (Pa) sensor readings** beside each scaler, so a scaler can be changed and judged against the sensor on one screen. Shows `-` while disconnected or before the first reading.
+
+### v0.1.6
+
+- Fix: Admin > Sensor Scalers (lift / drag / pressure, Absolute / Relative) now behaves like the legacy calibrator. The scale factor is sent as a 6-decimal number (not a widened float32 such as `0.7549999952316284`) and read-backs are shown to 6 decimals.
+- Fix: empty, non-numeric, `0x10`-style, zero, out-of-range or wrong channel/mode input is rejected instead of being written to the controller as a silent `0` / Absolute / Lift.
+- Fix: a scaler is only reported as saved when the controller reports the value the firmware rule predicts (Absolute: `Scaler = factor`; Relative: `Scaler = factor * Scaler`). The old value is read first, the write is followed by a 100 ms EEPROM settle, and the message shows old -> new. A Relative factor that would drive the stored scaler to 0 or out of range is refused.
+- Fix: the mode drop-down returns to Absolute after a save or Refresh (the field then holds an absolute value, so a second Save used to apply a Relative factor twice); Save/Refresh are disabled while a write is in progress.
+- Change: scalers also work in `--simulate`. The velocity lookup table is unchanged.
+- Connection: transport rewritten for the V2.0.6 JSON firmware with a link watchdog (drops within 8 s of silence, immediate on unplug), VID/PID rescan so a controller that returns on another COM number is found, and queued commands never replay onto a new session.
+- Sweeps: starting a sweep while disconnected is refused, and disconnecting stops any running sweep; fan is switched off immediately on quit.
+- CSV logs: the header row now shows names with units (for example `Lift (mN)`, `Angle (deg)`).
+- API: `setScaler` returns `{ ok, acknowledged, message, oldValue, newValue }`; it accepts the raw field text as `value`.
 
 ### v0.1.5
 

@@ -123,6 +123,8 @@ html, body { height: 100%; overflow: hidden; }
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 .cal-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid oklch(var(--b3)); padding: 10px 0; }
 .cal-row label { flex: 1; display: flex; align-items: center; gap: 8px; margin: 0; }
+.cal-live { display: flex; flex-direction: column; align-items: flex-end; min-width: 6.5em; padding: 4px 10px; background: oklch(var(--b1)); border: 2px solid oklch(var(--p)); border-radius: 8px; }
+.cal-live-value { font-size: 16px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 
 .lut-help { line-height: 1.5; margin-bottom: 10px; }
 .lut-capture { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }

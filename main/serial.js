@@ -112,6 +112,9 @@ function jsonRequestFor(command, payload) {
         case CMD.GET_LUT: return { getvlu: 0 };
         case CMD.CALIBRATE_DISPLAY: return { calibratedisplay: 0 };
         case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4) };
+        // Same trigger Process Control V2 sends ({"BL":1}); the controller resets into its USB HID
+        // bootloader and does not reply, so this command is never in RESPONSE_COMMANDS.
+        case CMD.ENTER_BOOTLOADER: return { BL: 1 };
         default: throw new Error(`Unsupported command ${command}`);
     }
 }

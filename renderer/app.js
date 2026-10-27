@@ -824,17 +824,17 @@ function hideFirmwareProgress() {
 // buttons valid for the current connection/hex-load stage are enabled. 'busy' disables everything
 // while an Erase-Program-Verify or Run sequence is in flight.
 function setBootloaderButtonState(bootState) {
-    const ids = ['connectBtn', 'loadHexBtn', 'eraseProgramVerify', 'runAppBtn'];
+    const ids = ['connectBtn', 'triggerBootloaderBtn', 'loadHexBtn', 'eraseProgramVerify', 'runAppBtn'];
     const enable = (id, value) => { const el = $(id); if (el) el.disabled = !value; };
     switch (bootState) {
         case 'disconnected':
-            enable('connectBtn', true); enable('loadHexBtn', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
+            enable('connectBtn', true); enable('triggerBootloaderBtn', true); enable('loadHexBtn', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
             break;
         case 'connected':
-            enable('connectBtn', true); enable('loadHexBtn', true); enable('eraseProgramVerify', false); enable('runAppBtn', false);
+            enable('connectBtn', true); enable('triggerBootloaderBtn', false); enable('loadHexBtn', true); enable('eraseProgramVerify', false); enable('runAppBtn', false);
             break;
         case 'hex_loaded':
-            enable('connectBtn', true); enable('loadHexBtn', true); enable('eraseProgramVerify', true); enable('runAppBtn', false);
+            enable('connectBtn', true); enable('triggerBootloaderBtn', false); enable('loadHexBtn', true); enable('eraseProgramVerify', true); enable('runAppBtn', false);
             break;
         case 'busy':
             ids.forEach((id) => enable(id, false));
@@ -851,6 +851,28 @@ function setBootloaderButtonState(bootState) {
 function enableBootloaderButtons(enabled) {
     setBootloaderButtonState(enabled ? (hexFileLoaded ? 'hex_loaded' : 'connected') : 'disconnected');
 }
+
+// Mirrors Process Control V2's triggerBootloader(): send the JSON trigger, then leave Connect enabled
+// (Connect itself polls for the HID device while it re-enumerates).
+$('triggerBootloaderBtn').addEventListener('click', async () => {
+    if (!window.confirm('Put the controller into bootloader mode? The fan will be stopped and the application will stop running until firmware is programmed or "Run Application" is used.')) return;
+    const btn = $('triggerBootloaderBtn');
+    btn.disabled = true;
+    log('Sending bootloader trigger...', 'info');
+    try {
+        const result = await window.windTunnel.bootloaderTrigger();
+        if (result && result.ok) {
+            log(result.message, 'info');
+            $('connectBtn').disabled = false;
+        } else {
+            log(`Failed: ${result ? result.message : 'Unknown'}`, 'error');
+            btn.disabled = false;
+        }
+    } catch (error) {
+        log(`Error: ${error.message}`, 'error');
+        btn.disabled = false;
+    }
+});
 
 $('connectBtn').addEventListener('click', async () => {
     const connectBtn = $('connectBtn');
@@ -878,10 +900,12 @@ $('connectBtn').addEventListener('click', async () => {
         } else {
             log(result ? result.message : 'Connection failed', 'error');
             connectBtn.disabled = false;
+            $('triggerBootloaderBtn').disabled = false;
         }
     } catch (error) {
         log(`Connection error: ${error.message}`, 'error');
         connectBtn.disabled = false;
+        $('triggerBootloaderBtn').disabled = false;
     }
 });
 
@@ -889,11 +913,13 @@ $('loadHexBtn').addEventListener('click', async () => {
     // Electron 32+ removed File.path, so the picker lives in the main process.
     const picked = await window.windTunnel.bootloaderPickHex();
     if (!picked) return;
-    state.hexPath = picked;
-    $('hexFilePathLabel').textContent = picked;
     try {
-        const result = await window.windTunnel.bootloaderLoadHex(state.hexPath);
+        const result = await window.windTunnel.bootloaderLoadHex(picked);
         if (result && result.ok) {
+            // Only an accepted file becomes the displayed/current one, so a rejected pick can never
+            // leave the label naming a file different from the one actually loaded.
+            state.hexPath = picked;
+            $('hexFilePathLabel').textContent = picked;
             hexFileLoaded = true;
             log('Hex loaded -- click Erase-Program-Verify', 'info');
             setBootloaderButtonState('hex_loaded');
@@ -956,8 +982,6 @@ $('runAppBtn').addEventListener('click', async () => {
 });
 
 setBootloaderButtonState('disconnected');
-
-window.windTunnel.getFirmwareInfo().then((info) => { $('approvedImageName').textContent = info.approvedImage; });
 
 function updateFirmwareBanner() {
     $('firmwareBanner').hidden = $('bootloaderPid').value.trim() !== '';

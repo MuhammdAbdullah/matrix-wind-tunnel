@@ -1,11 +1,15 @@
 const bootloader = require('./bootloader');
 const admin = require('./admin');
-const { pushEvent } = require('./state');
+const serial = require('./serial');
+const { CMD } = require('./protocol');
+const { state, publish, pushEvent } = require('./state');
 const path = require('path');
 
 // Single place to bump when a new approved firmware image ships (files are named WindTunnel V<x.y.z>.hex).
 const APPROVED_FIRMWARE_VERSION = '2.0.6';
 const APPROVED_IMAGE_NAME = `WindTunnel V${APPROVED_FIRMWARE_VERSION}.hex`;
+// Any firmware file whose name does not start with this is rejected at load time.
+const HEX_NAME_PREFIX = 'WindTunnel';
 
 function progress(stage, level, message) {
     pushEvent('firmware:progress', { stage, level, message });
@@ -16,10 +20,26 @@ function guard() {
     return null;
 }
 
+// USB IDs are hexadecimal, with or without a 0x prefix ("0x12BF", "12BF", "f010"), as Process Control V2
+// parses them (parseInt(..., 16)). Plain Number() rejected un-prefixed hex such as "F010".
 function parseId(value, fallback) {
     if (value === undefined || value === null || value === '') return fallback;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : NaN;
+    if (typeof value === 'number') return Number.isInteger(value) && value >= 0 && value <= 0xFFFF ? value : NaN;
+    const text = String(value).trim().replace(/^0x/i, '');
+    return /^[0-9a-f]{1,4}$/i.test(text) ? parseInt(text, 16) : NaN;
+}
+
+const hexId = (id) => `0x${id.toString(16).toUpperCase().padStart(4, '0')}`;
+
+// Names the VID/PID problem and, when the controller already shows up as a HID device, which PIDs exist.
+function missingIdMessage(vid, pid) {
+    const vendorId = parseId(vid, bootloader.USB_VENDOR_ID);
+    const base = 'Enter the bootloader\'s USB VID and PID in hexadecimal (the VID is normally 0x12BF), read from Windows Device Manager while the controller is in bootloader mode.';
+    if (!Number.isFinite(vendorId)) return base;
+    const found = bootloader.listHidProductIds(vendorId);
+    return found.length
+        ? `${base} USB HID devices currently present with VID ${hexId(vendorId)}: PID ${found.map(hexId).join(', ')}.`
+        : `${base} No USB HID device with VID ${hexId(vendorId)} is present right now.`;
 }
 
 function parseUsbIds(vid, pid) {
@@ -54,9 +74,31 @@ function guarded(stage, fn) {
     };
 }
 
+// Mirrors Process Control V2's 'send-bootloader' handler ({"BL":1} over the serial link). The fan is
+// stopped first so it is never left running when the controller resets, and the command is refused
+// while a sweep owns the fan. No reply is expected: the controller drops the serial link and
+// re-enumerates as the USB HID bootloader, which the Connect button then opens.
+const triggerBootloader = guarded('trigger', async () => {
+    if (state.simulation) return { ok: false, stage: 'trigger', reason: 'simulation', message: 'Simulation mode has no controller to put into bootloader mode.' };
+    if (!state.connected) return { ok: false, stage: 'trigger', reason: 'not-connected', message: 'Controller is not connected.' };
+    if (state.sweep.running) return { ok: false, stage: 'trigger', reason: 'sweep-running', message: 'Stop the active sweep before entering bootloader mode.' };
+    progress('trigger', 'info', 'Stopping the fan and sending the bootloader trigger...');
+    try {
+        await serial.sendBinary(CMD.FAN_SPEED, Buffer.from([0]), { source: 'system' });
+        state.fanSpeed = 0;
+        publish();
+    } catch (error) {
+        progress('trigger', 'warn', `Could not confirm fan stop before the trigger: ${error.message}`);
+    }
+    await serial.sendBinary(CMD.ENTER_BOOTLOADER, Buffer.alloc(0), { source: 'system', retries: 0 });
+    const message = 'Bootloader command sent -- click Connect (it waits up to 5 seconds for the device to enumerate).';
+    progress('trigger', 'info', message);
+    return { ok: true, stage: 'trigger', message };
+});
+
 const checkDevice = guarded('check-device', async (vid, pid) => {
     const ids = parseUsbIds(vid, pid);
-    if (!ids) return { ok: false, stage: 'check-device', reason: 'missing-usb-id', message: 'Enter the bootloader\'s USB VID and PID before checking for the device.' };
+    if (!ids) return { ok: false, stage: 'check-device', reason: 'missing-usb-id', message: missingIdMessage(vid, pid) };
     const present = bootloader.checkDeviceAvailable(ids.vendorId, ids.productId);
     return { ok: true, stage: 'check-device', present };
 });
@@ -64,7 +106,7 @@ const checkDevice = guarded('check-device', async (vid, pid) => {
 const connect = guarded('connect', async (vid, pid) => {
     const ids = parseUsbIds(vid, pid);
     if (!ids) {
-        const message = 'Enter the bootloader\'s USB VID and PID (read from Windows Device Manager while the controller is in bootloader mode) before connecting.';
+        const message = missingIdMessage(vid, pid);
         progress('connect', 'error', message);
         return { ok: false, stage: 'connect', reason: 'missing-usb-id', message };
     }
@@ -83,12 +125,17 @@ async function disconnect() {
 
 const loadHex = guarded('load-hex', async (hexPath) => {
     if (!hexPath) return { ok: false, stage: 'load-hex', reason: 'no-file', message: 'Select a .hex file.' };
+    // Only Wind Tunnel firmware images may be loaded; the check is on the file name, so it runs before
+    // the file is even opened and a rejected file never replaces a previously loaded one. The message
+    // is deliberately generic: the naming rule is a safety control and must not be disclosed to the operator.
+    if (!path.basename(hexPath).toLowerCase().startsWith(HEX_NAME_PREFIX.toLowerCase())) {
+        const message = 'This file was rejected: it is not an approved Wind Tunnel firmware image.';
+        progress('load-hex', 'error', message);
+        return { ok: false, stage: 'load-hex', reason: 'rejected', message };
+    }
     const result = bootloader.loadHexFile(hexPath);
     const message = `${result.recordCount} hex records loaded.`;
     progress('load-hex', 'info', message);
-    if (path.basename(hexPath).toLowerCase() !== APPROVED_IMAGE_NAME.toLowerCase()) {
-        progress('load-hex', 'warn', `Selected file is not the approved image (${APPROVED_IMAGE_NAME}).`);
-    }
     return { ok: true, stage: 'load-hex', message, recordCount: result.recordCount };
 });
 
@@ -139,6 +186,7 @@ const jumpToApp = guarded('run', async () => {
 module.exports = {
     APPROVED_FIRMWARE_VERSION,
     APPROVED_IMAGE_NAME,
+    triggerBootloader,
     checkDevice,
     connect,
     disconnect,

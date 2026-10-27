@@ -301,7 +301,6 @@
 
             <!-- BOOTLOADER TAB -->
             <div id="bootloaderTab" class="tab-content">
-                <p>Approved Image: <code id="approvedImageName">WindTunnel V2.x.x.hex</code></p>
                 <p id="firmwareBanner" class="update-status-message error" hidden>Confirm the bootloader's real USB PID in Device Manager before using these actions -- see the note below.</p>
                 <div class="admin-grid">
                     <article class="card bg-base-200 border border-base-300">
@@ -319,8 +318,7 @@
                         <div class="card-body">
                             <div class="panel-heading"><h2 class="card-title text-base">Bootloader Actions</h2></div>
                             <button class="btn btn-sm btn-outline" id="loadHexBtn" disabled>Load Hex File</button>
-                            <p class="text-xs opacity-60 mt-1" id="hexFilePathLabel">No hex file loaded</p>
-                            <div class="button-row mt-2">
+                            <p class="text-xs opacity-60 mt-1" id="hexFilePathLabel">No hex file loaded</p>                            <div class="button-row mt-2">
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="erase" id="eraseBtn" style="display:none;">Erase</button>
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="program" id="programBtn" style="display:none;">Program</button>
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="verify" id="verifyBtn" style="display:none;">Verify</button>
@@ -329,9 +327,9 @@
                                 <button class="btn btn-primary btn-sm" id="connectBtn">Connect</button>
                             </div>
                             <div class="button-row mt-2">
-                                <button class="btn btn-sm btn-outline" id="triggerBootloaderBtn" disabled title="No confirmed remote command exists to enter bootloader mode on this firmware -- use the device touchscreen.">Trigger Bootloader</button>
+                                <button class="btn btn-sm btn-outline" id="triggerBootloaderBtn" disabled title="Sends the {&quot;BL&quot;:1} JSON command (same as Process Control V2) to put the connected controller into bootloader mode.">Trigger Bootloader</button>
                             </div>
-                            <p class="text-xs opacity-60 mt-2">Enter bootloader mode on the device using its touchscreen "Bootloader" menu entry first -- the Wind Tunnel firmware has no confirmed remote command to enter bootloader mode from software.</p>
+                            <p class="text-xs opacity-60 mt-2">Click Trigger Bootloader to send the bootloader command to the connected controller, then click Connect. If the controller does not respond, enter bootloader mode with its touchscreen "Bootloader" menu entry instead.</p>
                             <div id="firmwareProgressSection" class="mt-2 hidden">
                                 <div class="text-xs font-bold text-center" id="firmwareProgressLabel">Working...</div>
                                 <progress class="progress progress-success w-full" id="firmwareProgressFill" value="0" max="100"></progress>

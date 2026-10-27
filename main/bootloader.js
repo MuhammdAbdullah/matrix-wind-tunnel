@@ -1,7 +1,10 @@
 const fs = require('fs');
 
+// The whole module, as in Process Control V2 (`const HID = require('node-hid')`): `HID.devices()` is a
+// module-level function and `new HID.HID(...)` is the device class. Destructuring `{ HID }` would leave
+// only the class, which has no `devices()`.
 let HID;
-try { ({ HID } = require('node-hid')); } catch (_error) { HID = null; }
+try { HID = require('node-hid'); } catch (_error) { HID = null; }
 
 // Confirmed from assets/bootloader-source/ (copied from Process Control V2's generic Matrix
 // PIC32 bootloader tool). The application firmware's USB identity (VID 0x12BF / PID 0xF010) is
@@ -171,6 +174,18 @@ function checkDeviceAvailable(vid, pid) {
         return HID.devices().some((d) => d.vendorId === vid && d.productId === pid);
     } catch (_error) {
         return false;
+    }
+}
+
+// USB HID devices currently present under a vendor ID, so the operator can see the bootloader's PID
+// without opening Device Manager.
+function listHidProductIds(vid) {
+    if (!HID) return [];
+    try {
+        const pids = new Set(HID.devices().filter((d) => d.vendorId === vid).map((d) => d.productId));
+        return [...pids];
+    } catch (_error) {
+        return [];
     }
 }
 
@@ -403,6 +418,7 @@ module.exports = {
     USB_VENDOR_ID,
     isAvailable,
     checkDeviceAvailable,
+    listHidProductIds,
     isConnected,
     connect,
     disconnect,

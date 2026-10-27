@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('windTunnel', {
 
     getFirmwareInfo: () => ipcRenderer.invoke('admin:firmwareInfo'),
     bootloaderPickHex: () => ipcRenderer.invoke('admin:bootloaderPickHex'),
+    bootloaderTrigger: () => ipcRenderer.invoke('admin:bootloaderTrigger'),
     bootloaderCheckDevice: (vid, pid) => ipcRenderer.invoke('admin:bootloaderCheckDevice', vid, pid),
     bootloaderConnect: (vid, pid) => ipcRenderer.invoke('admin:bootloaderConnect', vid, pid),
     bootloaderDisconnect: () => ipcRenderer.invoke('admin:bootloaderDisconnect'),

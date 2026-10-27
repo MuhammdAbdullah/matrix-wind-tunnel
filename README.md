@@ -92,7 +92,7 @@ Values are the controller's raw floats; drag shape and tapping channel are metad
 
 **Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
-**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect â†’ read info â†’ erase â†’ program (10 records per exchange) â†’ CRC verify â†’ run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin â†’ Communication Settings. The controller must be put into bootloader mode on its touchscreen; the app cannot trigger it (the approved firmware has no serial command for this, unlike Process Control's `{"BL":1}`), so the Trigger Bootloader button stays disabled. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. The approved image name is derived from `APPROVED_FIRMWARE_VERSION` in `main/firmware.js` (`WindTunnel V<x.y.z>.hex`) and a warning is logged if a different file is loaded. See `CLAUDE.md` for the full details and known caveats.
+**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect â†’ read info â†’ erase â†’ program (10 records per exchange) â†’ CRC verify â†’ run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin â†’ Communication Settings. VID/PID are entered in hexadecimal, with or without a `0x` prefix (`12BF`, `0xF010`); if they are missing, the error lists the USB HID PIDs currently present under that VID. **Trigger Bootloader** stops the fan and sends `{"BL":1}` over the application serial link (the same command Process Control V2 uses; no reply is expected), after which Connect waits for the HID bootloader to enumerate. That command is **not yet verified on Wind Tunnel V2.0.6 hardware**; if the controller ignores it, enter bootloader mode from its touchscreen "Bootloader" menu instead. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. A file that is not an approved Wind Tunnel firmware image is rejected before it is opened, and a rejected pick never replaces a hex file that is already loaded. See `CLAUDE.md` for the full details and known caveats.
 
 ## Experiments
 
@@ -186,12 +186,13 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `lockAdmin()` | `admin:lock` | End the session. |
 | `getAuditLog()` | `admin:getAuditLog` | Last 50 audit entries. |
 | `requestElevation()` | `admin:requestElevation` | Stub â€” always declines (UAC elevation not wired up yet). |
-| `getFirmwareInfo()` | `admin:firmwareInfo` | `{ approvedImage, version }` for the Admin label. |
+| `getFirmwareInfo()` | `admin:firmwareInfo` | `{ version }` of the approved firmware. |
 | `bootloaderPickHex()` | `admin:bootloaderPickHex` | Native file dialog; returns the chosen path or `null`. |
-| `bootloaderCheckDevice(vid, pid)` | `admin:bootloaderCheckDevice` | `{ ok, present }`. |
+| `bootloaderTrigger()` | `admin:bootloaderTrigger` | Stop the fan and send `{"BL":1}` to the connected controller. Refused in simulation, when disconnected and during a sweep. |
+| `bootloaderCheckDevice(vid, pid)` | `admin:bootloaderCheckDevice` | `{ ok, present }`. VID/PID are hex strings (`0x` optional). |
 | `bootloaderConnect(vid, pid)` | `admin:bootloaderConnect` | Open the bootloader HID session. |
 | `bootloaderDisconnect()` | `admin:bootloaderDisconnect` | Close it. |
-| `bootloaderLoadHex(path)` | `admin:bootloaderLoadHex` | Parse an Intel-HEX file. |
+| `bootloaderLoadHex(path)` | `admin:bootloaderLoadHex` | Parse an Intel-HEX file; `{ ok: false, reason: 'rejected' }` if it is not an approved Wind Tunnel firmware image. |
 | `bootloaderReadInfo()` | `admin:bootloaderReadInfo` | Bootloader version. |
 | `bootloaderErase()` | `admin:bootloaderErase` | Erase application flash. |
 | `bootloaderProgram()` | `admin:bootloaderProgram` | Program the loaded hex. |
@@ -248,6 +249,15 @@ Do not modify or reflash firmware during normal UI development. Firmware flashin
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### Unreleased
+
+- New: Admin > Bootloader "Trigger Bootloader" is enabled and sends `{"BL":1}` to the connected controller (same command Process Control V2 uses) after stopping the fan, then Connect opens the USB HID bootloader. Unverified on Wind Tunnel V2.0.6 hardware; the touchscreen "Bootloader" entry remains the fallback.
+- Fix: bootloader VID/PID fields accept hexadecimal with or without `0x` (`F010`, `0x12BF`); previously un-prefixed hex was rejected. When an ID is missing, the message lists the USB HID PIDs currently present under that VID.
+- Fix: bootloader device detection (`HID.devices()`) now works; the `node-hid` module was being destructured so only the device class was available.
+- Change: firmware files that are not approved Wind Tunnel images are rejected at load time (before the file is opened), and a rejected pick no longer updates the displayed hex path. This replaces the earlier warning-only check.
+- Change: the Admin > Bootloader "Approved Image" label is removed; `getFirmwareInfo()` now returns `{ version }` only.
+- API: added `bootloaderTrigger`.
 
 ### v0.1.7
 

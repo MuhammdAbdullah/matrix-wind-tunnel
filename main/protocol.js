@@ -11,7 +11,8 @@ const CMD = {
     SET_LUT: 'J',
     GET_LUT: 'K',
     CALIBRATE_DISPLAY: 'L',
-    SET_NETWORK: 'M'
+    SET_NETWORK: 'M',
+    ENTER_BOOTLOADER: 'N'
 };
 
 const START_MARKER = 0x3A;

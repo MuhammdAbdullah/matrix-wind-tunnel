@@ -208,11 +208,11 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | Method | IPC channel | Description |
 |---|---|---|
 | `getScalers()` | `calibration:getScalers` | `{ lift, drag, pressure }`. |
-| `setScaler(channel, mode, value)` | `calibration:setScaler` | Channel `0` lift, `1` drag, `2` pressure; mode `0` absolute, `1` relative. Value is the typed factor (Absolute replaces the scaler, Relative multiplies it). Returns `{ ok, acknowledged, message, oldValue, newValue }` after read-back. |
+| `setScaler(channel, mode, value)` | `calibration:setScaler` | Channel `0` lift, `1` drag, `2` pressure; mode `0` absolute, `1` relative. Value is the typed factor (Absolute replaces the scaler, Relative multiplies it). Returns `{ ok, acknowledged, message, oldValue, newValue, sentValue }` after read-back (`sentValue` is the factor that was sent). |
 | `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %…100 %). |
 | `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %…100 %, each 0–100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
 | `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0–100) for the pressure capture. Admin-gated except for 0 % (stop). |
-| `calibrateDisplay()` | `calibration:calibrateDisplay` | Run touchscreen calibration. |
+| `calibrateDisplay()` | `calibration:calibrateDisplay` | Start touchscreen calibration on the controller. The firmware sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
 | `setNetwork(ip0, ip1, ip2, ip3, port, dhcp)` | `calibration:setNetwork` | Store IP, port and the DHCP flag on the controller (V2.0.7). The controller sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
 
 **Admin and firmware**
@@ -286,7 +286,7 @@ USB serial, `115200` baud. Request frame: `':' + command byte + payload + ';' + 
 | `I` | – | Read scalers | 3 × float32 |
 | `J` | index, float32 | Set LUT entry | ack |
 | `K` | – | Read LUT | 10 × float32 |
-| `L` | – | Calibrate display | ack |
+| `L` | – | Calibrate display | none (sent only) |
 | `M` | 4 IP bytes, uint16 LE port, DHCP flag byte | Store network address (V2.0.7 JSON: `ip0`–`ip3`, `port`, `dhcp`) | none |
 
 The app sends the JSON form of these commands (the V2.0.7 firmware no longer parses the binary frames), as one text message per request when connected over Ethernet. The command set is defined by the firmware and must not be extended from this app.
@@ -302,6 +302,12 @@ Do not modify or reflash firmware during normal UI development. Firmware flashin
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### v0.2.2
+
+- Fix: Admin > Sensor Scalers no longer replaces what you typed. After an **Absolute** save that the controller confirms, the box keeps your value (for example `1.01`) instead of the controller's float32 read-back (for example `1.0000001`). **Relative** saves still show the resulting absolute scaler, and Refresh still shows what the controller holds. The value sent to the controller is unchanged: your number rounded to 6 decimals (`{"senscch":0,"senscale":1.01,"senscmode":0}`).
+- Fix: **Calibrate Display** no longer reports "acknowledged". The firmware sends no reply to this command, so it now reports that calibration was started and tells the operator to follow the prompts on the controller touchscreen (`acknowledged: false, sent: true`).
+- API: `setScaler` also returns `sentValue`.
 
 ### v0.2.1
 

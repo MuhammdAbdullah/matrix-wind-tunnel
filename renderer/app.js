@@ -640,11 +640,14 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
     // The raw text goes to the main process, which validates it: Number('') would silently be 0 here.
     setScalerBusy(true);
     try {
-        const result = await window.windTunnel.setScaler(channel, Number($(modeId).value), $(inputId).value);
+        const mode = Number($(modeId).value);
+        const result = await window.windTunnel.setScaler(channel, mode, $(inputId).value);
         if (result.ok) {
-            // The field now shows the scaler the controller holds, i.e. an absolute value. Leave the mode
-            // on Absolute so pressing Save again cannot multiply a Relative factor in a second time.
-            $(inputId).value = result.newValue;
+            // Absolute: keep the value the operator typed (the controller confirmed it within tolerance), so a
+            // float32 read-back such as 1.0000001 never replaces a plain 1. Relative: the field must show the
+            // resulting absolute scaler. Leave the mode on Absolute so pressing Save again cannot multiply
+            // a Relative factor in a second time.
+            $(inputId).value = mode === 0 ? result.sentValue : result.newValue;
             $(modeId).value = '0';
         }
         $('scalerAck').textContent = result.message;

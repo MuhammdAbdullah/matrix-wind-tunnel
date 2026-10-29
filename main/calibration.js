@@ -141,7 +141,7 @@ async function setScaler(request) {
                 message: `${label} not confirmed: sent ${factor}, expected ${roundScaler(expected)} but the controller reports ${newValue} (was ${oldValue}). Press Refresh to re-read the controller.`
             };
         }
-        return { ok: true, acknowledged: true, oldValue, newValue, message: `${label} confirmed by the controller: ${oldValue} -> ${newValue}.` };
+        return { ok: true, acknowledged: true, oldValue, newValue, sentValue: factor, message: `${label} confirmed by the controller: ${oldValue} -> ${newValue}.` };
     } catch (error) {
         appendAudit({ source: 'calibrator', command: CMD.SET_SCALER, payload: [...payload], result: 'failed', error: error.message });
         const detail = written ? `the write was sent but the read-back failed (${error.message}); press Refresh to see what the controller holds` : `write not acknowledged: ${error.message}`;
@@ -248,7 +248,8 @@ async function calibrateDisplay() {
     if (blocked) return { ok: false, acknowledged: false, message: blocked };
     try {
         await serial.sendBinary(CMD.CALIBRATE_DISPLAY, Buffer.alloc(0), { source: 'calibrator' });
-        return { ok: true, acknowledged: true, message: 'Display calibration command acknowledged.' };
+        // The firmware sends no reply to this command, so it is reported as sent, never as acknowledged.
+        return { ok: true, acknowledged: false, sent: true, message: 'Display calibration started - follow the prompts on the controller touchscreen.' };
     } catch (error) {
         return { ok: false, acknowledged: false, message: `Write not acknowledged: ${error.message}` };
     }

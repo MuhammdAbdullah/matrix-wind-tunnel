@@ -301,7 +301,7 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ## Release notes
 
-### Unreleased
+### v0.2.0
 
 - New: **Ethernet** support for the V2.0.7 controller (WebSocket on port `1245`). With no USB controller the app connects over Ethernet using the address saved in Admin > Network; USB is always preferred and takes over automatically when it appears. Verified on a real controller: the WebSocket API answers as documented, and clients must close properly (an abrupt disconnect blocks new connections for ~23 s).
 - New: **Remote access.** The PC that owns the controller (USB, or Ethernet when there is no USB) can host a relay so other PCs, tablets and phones can watch, or also control, the tunnel. Admin chooses *off*, *view only* or *view and control*; access needs a code; sweeps, logging, calibration, firmware and Admin stay on the master. A browser page is served for tablets/phones; the app can also connect to another PC as a remote client.

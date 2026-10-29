@@ -11,6 +11,7 @@ const { readConfig, updateConfig } = require('./config');
 const { probe, DEFAULT_ETHERNET_PORT } = require('./ethernet');
 const serial = require('./serial');
 const sweeps = require('./sweeps');
+const experiments = require('./experiments');
 const control = require('./control');
 
 // ---------------------------------------------------------------------------------------------
@@ -154,7 +155,8 @@ function loadSettings() {
         relay: {
             mode: RELAY_MODES.includes(relay.mode) ? relay.mode : 'off',
             port: Number(relay.port) || RELAY_DEFAULT_PORT,
-            accessCode: relay.accessCode || generateAccessCode()
+            // A fresh code every launch; it is never read back from or written to the config file.
+            accessCode: generateAccessCode()
         },
         remote: { host: String(remote.host || ''), port: Number(remote.port) || RELAY_DEFAULT_PORT }
     };
@@ -163,7 +165,8 @@ function loadSettings() {
 let settings = loadSettings();
 
 function saveSettings() {
-    updateConfig({ network: settings });
+    const { accessCode: _accessCode, ...relay } = settings.relay;
+    updateConfig({ network: { ...settings, relay } });
 }
 
 function isValidPort(value) {
@@ -194,8 +197,9 @@ let nextClientId = 1;
 const relayClients = new Map(); // ws -> client record
 const authFailures = new Map(); // ip -> { count, lockedUntil }
 
-// Only what a remote operator needs to watch the tunnel. Diagnostics, logging paths, Admin state and
-// experiment selections stay local to the master.
+// Only what a remote operator needs to watch the tunnel and follow the experiment the master is
+// running (which experiment, its settings, the sweep and each logged point). Diagnostics, logging
+// paths and Admin state stay local to the master.
 function snapshot() {
     return {
         connected: state.connected,
@@ -209,7 +213,25 @@ function snapshot() {
         sensors: state.sensors,
         sensorSampleSeq: state.sensorSampleSeq,
         leds: state.leds,
-        sweep: { running: state.sweep.running, type: state.sweep.type }
+        experimentId: state.experimentId,
+        tapping: state.tapping,
+        aerofoilAngle: state.aerofoilAngle,
+        manualAngle: state.manualAngle,
+        dragShape: state.dragShape,
+        fanSpeedIncrement: state.fanSpeedIncrement,
+        stemRacingChartType: state.stemRacingChartType,
+        customAxes: state.customAxes,
+        loggedPointSeq: state.loggedPointSeq,
+        lastLoggedPoint: state.lastLoggedPoint,
+        sweep: {
+            running: state.sweep.running,
+            type: state.sweep.type,
+            start: state.sweep.start,
+            end: state.sweep.end,
+            step: state.sweep.step,
+            delay: state.sweep.delay,
+            current: state.sweep.current
+        }
     };
 }
 
@@ -423,6 +445,36 @@ function setRemoteStatus(patch) {
     state.network.remote = { ...state.network.remote, ...patch };
 }
 
+// Mirrors the master's experiment (selection, settings, sweep, logged points) so the renderer plots
+// the same run. The values come from another PC, so each one is validated before it is stored.
+function applyExperimentSnapshot(remote) {
+    const finite = (value, fallback) => (Number.isFinite(value) ? value : fallback);
+    if (typeof remote.experimentId === 'string') state.experimentId = experiments.getById(remote.experimentId).id;
+    if (remote.tapping) state.tapping = { channel: finite(remote.tapping.channel, 1), increment: finite(remote.tapping.increment, 1) };
+    state.aerofoilAngle = finite(remote.aerofoilAngle, state.aerofoilAngle);
+    if (remote.manualAngle) state.manualAngle = { increment: finite(remote.manualAngle.increment, 0) };
+    if (experiments.DRAG_SHAPES.includes(remote.dragShape)) state.dragShape = remote.dragShape;
+    state.fanSpeedIncrement = finite(remote.fanSpeedIncrement, state.fanSpeedIncrement);
+    state.stemRacingChartType = finite(remote.stemRacingChartType, state.stemRacingChartType);
+    if (remote.customAxes && typeof remote.customAxes.x === 'string' && typeof remote.customAxes.y === 'string') {
+        state.customAxes = { x: remote.customAxes.x, y: remote.customAxes.y };
+    }
+    state.loggedPointSeq = finite(remote.loggedPointSeq, state.loggedPointSeq);
+    state.lastLoggedPoint = remote.lastLoggedPoint && typeof remote.lastLoggedPoint === 'object' ? remote.lastLoggedPoint : null;
+    const sweep = remote.sweep;
+    if (sweep && typeof sweep === 'object') {
+        state.sweep = {
+            type: sweep.type === 'angle' || sweep.type === 'fan' ? sweep.type : null,
+            running: Boolean(sweep.running),
+            start: finite(sweep.start, 0),
+            end: finite(sweep.end, 0),
+            step: finite(sweep.step, 0),
+            delay: finite(sweep.delay, 5000),
+            current: finite(sweep.current, 0)
+        };
+    }
+}
+
 function applySnapshot(remote) {
     if (!remote || typeof remote !== 'object') return;
     state.connected = Boolean(remote.connected);
@@ -436,6 +488,7 @@ function applySnapshot(remote) {
     }
     if (Number.isFinite(remote.sensorSampleSeq)) state.sensorSampleSeq = remote.sensorSampleSeq;
     if (remote.leds && typeof remote.leds === 'object') state.leds = remote.leds;
+    applyExperimentSnapshot(remote);
     setRemoteStatus({ hardwareTransport: remote.transport || null, masterSweepRunning: Boolean(remote.sweep && remote.sweep.running) });
 }
 
@@ -456,6 +509,7 @@ function clearRemoteState({ keepRemoteMode = false } = {}) {
     state.sensors = { lift: 0, drag: 0, pressure: 0, velocity: 0 };
     state.fanSpeed = 0;
     state.angle = 0;
+    state.sweep = { ...state.sweep, running: false };
     setRemoteStatus({ connected: false, hardwareTransport: null, masterSweepRunning: false });
 }
 

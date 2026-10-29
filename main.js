@@ -65,8 +65,13 @@ ipcMain.handle('device:sendCommand', async (_event, command, payload = []) => {
 });
 ipcMain.handle('device:getDiagnostics', () => state.diagnostics);
 
+// The experiment, its settings and the sweep belong to the master PC; a remote client only mirrors them.
+const masterOwned = (handler) => (...args) => (state.transport === 'remote'
+    ? { ok: false, message: 'The experiment is set up on the master PC.' }
+    : handler(...args));
+
 ipcMain.handle('experiment:list', () => ({ experiments: experiments.EXPERIMENTS, dragShapes: experiments.DRAG_SHAPES }));
-ipcMain.handle('experiment:select', (_event, experimentId) => {
+ipcMain.handle('experiment:select', masterOwned((_event, experimentId) => {
     // Switching experiments ends the current log -- the next sweep for the
     // newly selected experiment must prompt for a fresh save location/name.
     if (state.logging.active && state.logging.experimentId !== experimentId) logging.stopLog();
@@ -76,42 +81,42 @@ ipcMain.handle('experiment:select', (_event, experimentId) => {
     state.manualAngle = { increment: 5 };
     publish();
     return { experimentId: state.experimentId };
-});
-ipcMain.handle('experiment:setTapping', (_event, { channel }) => {
+}));
+ipcMain.handle('experiment:setTapping', masterOwned((_event, { channel }) => {
     if (channel !== undefined) state.tapping.channel = Math.min(23, Math.max(1, Number(channel) || 1));
     publish();
     return state.tapping;
-});
-ipcMain.handle('experiment:setAerofoilAngle', (_event, value) => {
+}));
+ipcMain.handle('experiment:setAerofoilAngle', masterOwned((_event, value) => {
     state.aerofoilAngle = Math.min(45, Math.max(-45, Number(value) || 0));
     publish();
     return state.aerofoilAngle;
-});
-ipcMain.handle('experiment:setManualAngleIncrement', (_event, increment) => {
+}));
+ipcMain.handle('experiment:setManualAngleIncrement', masterOwned((_event, increment) => {
     state.manualAngle.increment = Math.min(45, Math.max(0, Number(increment) || 0));
     publish();
     return state.manualAngle;
-});
-ipcMain.handle('experiment:setFanSpeedIncrement', (_event, increment) => {
+}));
+ipcMain.handle('experiment:setFanSpeedIncrement', masterOwned((_event, increment) => {
     state.fanSpeedIncrement = Math.min(25, Math.max(0, Number(increment) || 0));
     publish();
     return state.fanSpeedIncrement;
-});
-ipcMain.handle('experiment:setStemRacingChartType', (_event, chartType) => {
+}));
+ipcMain.handle('experiment:setStemRacingChartType', masterOwned((_event, chartType) => {
     state.stemRacingChartType = Math.min(2, Math.max(0, Number(chartType) || 0));
     publish();
     return state.stemRacingChartType;
-});
-ipcMain.handle('experiment:setCustomAxes', (_event, { xField, yField }) => {
+}));
+ipcMain.handle('experiment:setCustomAxes', masterOwned((_event, { xField, yField }) => {
     state.customAxes = { x: xField || state.customAxes.x, y: yField || state.customAxes.y };
     publish();
     return state.customAxes;
-});
-ipcMain.handle('experiment:setDragShape', (_event, shape) => {
+}));
+ipcMain.handle('experiment:setDragShape', masterOwned((_event, shape) => {
     if (experiments.DRAG_SHAPES.includes(shape)) state.dragShape = shape;
     publish();
     return state.dragShape;
-});
+}));
 
 // Shared by log:start and the sweep starters below so every experiment type
 // (not just the no-sweep ones that only use the "Start log" button) is asked

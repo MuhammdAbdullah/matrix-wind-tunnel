@@ -104,6 +104,7 @@
                 <article class="card bg-base-200 border border-base-300">
                     <div class="card-body">
                         <div class="panel-heading"><h2 class="card-title text-base">Experiment Setup</h2><div class="flex items-center gap-2"><span id="logStatePill" class="badge badge-primary pill-fade">Logging</span><span id="sweepStatePill" class="badge badge-primary pill-fade"></span></div></div>
+                        <p id="remoteExperimentNote" class="text-xs opacity-70 hidden">Following the master PC: the experiment, its settings and the plots update automatically.</p>
                         <label>Experiment<select id="experimentSelect" class="select select-bordered select-sm w-full"></select></label>
                         <div id="tappingFields" class="hidden">
                             <div class="split">
@@ -342,6 +343,9 @@
                             </div>
                             <div class="mt-2 text-sm">Access code <strong id="relayCode" class="font-mono">----</strong>
                                 <button id="regenCode" class="btn btn-ghost btn-xs">New code</button>
+                            </div>
+                            <div class="mt-2 text-sm">Give other PCs <strong id="relayShare" class="font-mono">-</strong>
+                                <button id="copyShare" class="btn btn-ghost btn-xs">Copy</button>
                             </div>
                             <div class="button-row mt-2"><button id="saveRelay" class="btn btn-primary btn-sm">Save</button></div>
                             <p id="relayAck" class="text-xs opacity-60 mt-2">Sweeps, logging, calibration, firmware and Admin always stay on this PC. Traffic is not encrypted: use this on a trusted network.</p>

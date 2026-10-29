@@ -238,6 +238,7 @@ async function loadExperiments(selectedId) {
 function render(value) {
     const stemRacingChartTypeChanged = state.lastDeviceState && state.lastDeviceState.stemRacingChartType !== value.stemRacingChartType;
     state.lastDeviceState = value;
+    followMaster(value);
     state.connected = value.connected;
     state.simulation = value.simulation;
     state.sweepRunning = value.sweep.running;
@@ -270,7 +271,6 @@ function render(value) {
     $('adminConnectionPill').className = `badge ${badgeTone}`;
     $('adminTransport').textContent = value.connected ? `${value.simulation ? 'Simulation' : TRANSPORT_LABELS[value.transport] || 'USB serial'} · ${value.port}` : remoteMode ? 'Remote · reconnecting' : 'USB serial · waiting';
     renderNetworkStatus(value);
-    applyRemoteRestrictions(value);
     $('adminRetries').textContent = value.diagnostics.retries;
     $('adminErrors').textContent = value.diagnostics.errors;
 
@@ -303,6 +303,7 @@ function render(value) {
     $('logStatus').textContent = value.logging.active ? `Logging to ${value.logging.path} (${value.logging.rowCount} rows)` : 'Logging idle.';
     $('startLog').disabled = value.logging.active;
     $('stopLog').disabled = !value.logging.active;
+    applyRemoteRestrictions(value);
 
     const showLogPill = value.logging.active && !value.sweep.running;
     $('logStatePill').classList.toggle('pill-active', showLogPill);
@@ -320,7 +321,8 @@ function render(value) {
     if (value.connected && state.currentExperiment) {
         if (freshSample) state.liveSamples.push({ ...value.sensors, fanSpeed: value.fanSpeed, angle: value.angle, time: Date.now() });
         if (state.currentExperiment.sweepType) {
-            if (value.sweep.running && !state.sweepWasRunning) {
+            const joinedMidSweep = value.transport === 'remote' && value.sweep.running && !state.historyRuns.length;
+            if (value.sweep.running && (!state.sweepWasRunning || joinedMidSweep)) {
                 // This publish is the sweep-start transition itself, fired before the motor has
                 // moved to the start angle (sweeps.js's startSweep() publishes before its first
                 // tick() runs) -- only open the run here. Recording a point now would use stale
@@ -342,7 +344,7 @@ function render(value) {
             // main/sweeps.js's logPoint(), fired by the Log Point button) tell us a new point
             // was actually captured, as opposed to an unrelated publish.
             const freshLoggedPoint = value.loggedPointSeq !== state.lastLoggedPointSeq;
-            if (freshLoggedPoint && value.lastLoggedPoint) state.experimentHistory.push({ ...value.lastLoggedPoint });
+            if (freshLoggedPoint && state.lastLoggedPointSeq !== null && value.lastLoggedPoint) state.experimentHistory.push({ ...value.lastLoggedPoint });
         }
     }
     state.lastSensorSampleSeq = value.sensorSampleSeq;
@@ -802,15 +804,42 @@ const TRANSPORT_LABELS = { usb: 'USB serial', ethernet: 'Ethernet (WebSocket)', 
 // Remote clients never own the hardware: view-only ones cannot touch any control, and controllers
 // still cannot start sweeps/logs (those run on the master). The master enforces this independently.
 const REMOTE_CONTROL_IDS = ['fanSlider', 'angleSlider', 'fanValue', 'angleValue', 'zeroSensors', 'zeroMotor', 'ledAnimMode', 'ledAnimColor', 'ledAmbMode', 'ledAmbColor'];
-const REMOTE_MASTER_ONLY_IDS = ['startSweep', 'startLog', 'logPointButton'];
+// startSweep/startLog are re-enabled by render() itself, so they are only ever forced off here.
+const REMOTE_FORCE_OFF_IDS = ['startSweep', 'startLog'];
+// Experiment setup belongs to the master PC: a remote client shows it but cannot change it.
+const REMOTE_MASTER_ONLY_IDS = ['logPointButton', 'experimentSelect', 'tappingChannel', 'aerofoilAngle', 'manualAngleIncrementSelect', 'dragShapeSelect', 'fanSpeedIncrementSelect', 'stemRacingChartTypeSelect', 'customXSelect', 'customYSelect', 'sweepStart', 'sweepEnd', 'sweepStep', 'sweepDelay'];
 
 function applyRemoteRestrictions(value) {
     const remote = value.transport === 'remote';
     const viewOnly = remote && value.remoteAccess !== 'control';
     REMOTE_CONTROL_IDS.forEach((id) => { $(id).disabled = viewOnly; });
-    if (remote) REMOTE_MASTER_ONLY_IDS.forEach((id) => { $(id).disabled = true; });
+    if (remote) REMOTE_FORCE_OFF_IDS.forEach((id) => { $(id).disabled = true; });
+    REMOTE_MASTER_ONLY_IDS.forEach((id) => { $(id).disabled = remote; });
+    $('remoteExperimentNote').classList.toggle('hidden', !remote);
     $('stopSweep').title = remote ? 'Stops the sweep running on the master PC' : '';
-    if (remote) $('stopSweep').disabled = viewOnly;
+    if (remote) $('stopSweep').disabled = viewOnly || !value.sweep.running;
+}
+
+// A remote client mirrors the master's experiment: it switches to the experiment the master selected,
+// shows the master's settings and sweep range, and (through render()) plots each sweep and logged point.
+function followMaster(value) {
+    if (value.transport !== 'remote' || !state.experiments.length) return;
+    if (value.experimentId && (!state.currentExperiment || state.currentExperiment.id !== value.experimentId)) {
+        const experiment = state.experiments.find((item) => item.id === value.experimentId);
+        if (experiment) { $('experimentSelect').value = experiment.id; applyExperiment(experiment); }
+    }
+    if (value.dragShape) $('dragShapeSelect').value = value.dragShape;
+    if (value.manualAngle) $('manualAngleIncrementSelect').value = value.manualAngle.increment;
+    $('fanSpeedIncrementSelect').value = value.fanSpeedIncrement;
+    $('stemRacingChartTypeSelect').value = value.stemRacingChartType;
+    if (value.customAxes) { $('customXSelect').value = value.customAxes.x; $('customYSelect').value = value.customAxes.y; }
+    const sweep = value.sweep;
+    if (state.currentExperiment && state.currentExperiment.sweepType && sweep.type === state.currentExperiment.sweepType) {
+        $('sweepStart').value = sweep.start;
+        $('sweepEnd').value = sweep.end;
+        $('sweepStep').value = Math.abs(sweep.step);
+        $('sweepDelay').value = sweep.delay / 1000;
+    }
 }
 
 function setPill(id, text, tone) {
@@ -864,6 +893,28 @@ function renderNetworkStatus(value) {
     }
 }
 
+// "address:port CODE" as shown on the master; pasting it into the client's address field fills all three inputs.
+let shareText = '';
+const SHARE_PATTERN = /^\s*([^\s:]+)(?::(\d{1,5}))?\s+([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})\s*$/;
+
+$('copyShare').addEventListener('click', async () => {
+    try {
+        await navigator.clipboard.writeText(shareText);
+        log('Connection details copied; paste them into Master address on the other PC');
+    } catch (error) {
+        log(`Could not copy: ${error.message}`, 'error');
+    }
+});
+
+$('remoteHost').addEventListener('paste', (event) => {
+    const match = SHARE_PATTERN.exec(event.clipboardData.getData('text'));
+    if (!match) return;
+    event.preventDefault();
+    $('remoteHost').value = match[1];
+    if (match[2]) $('remotePort').value = match[2];
+    $('remoteCode').value = match[3];
+});
+
 async function refreshNetworkSettings() {
     const result = await window.windTunnel.getNetworkSettings();
     if (!result.ok) { log(result.message, 'error'); return; }
@@ -875,6 +926,9 @@ async function refreshNetworkSettings() {
     $('relayMode').value = result.relay.mode;
     setIfIdle('relayPort', result.relay.port);
     $('relayCode').textContent = result.relay.accessCode;
+    shareText = result.addresses.length ? `${result.addresses[0]}:${result.relay.port} ${result.relay.accessCode}` : '';
+    $('relayShare').textContent = shareText || 'no network adapter found';
+    $('copyShare').disabled = !shareText;
     setIfIdle('remoteHost', result.remote.host);
     setIfIdle('remotePort', result.remote.port);
     $('relayUrls').textContent = result.addresses.length ? result.addresses.map((address) => `http://${address}:${result.relay.port}`).join('   ') : 'no network adapter found';

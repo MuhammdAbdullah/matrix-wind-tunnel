@@ -116,8 +116,10 @@ The V2.0.7 controller serves its JSON API over a **WebSocket** on port `1245` (o
 
 1. *Controller Network Settings*: DHCP on/off, static IP and port, then **Send To Controller** (needs a connected controller, Admin unlocked and no sweep running). The controller sends no reply to this command, so it is reported as *sent*, not acknowledged; the IP cannot be read back.
 2. *Connect To Controller Over Ethernet*: tick the option, enter the controller's address and port (default `1245`) or use **Scan Network** (finds controllers on this PC's local /24 subnets) and press **Save**. Use a switch/router with DHCP, or give the controller a static IP in the PC's subnet first.
-3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated; **New code** replaces it and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown. Connected devices are listed with their command counts.
-4. *Connect To A Master PC*: on another PC, pick a master from **Masters found on this network** (or type its address), enter the access code and press **Connect**. This app then mirrors the master and stops using its own USB/Ethernet link; **Disconnect** returns to local scanning. The code is not saved, so it is asked for again each session.
+3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated fresh on every app launch (never saved to disk, so it must be copied again after a restart); **New code** replaces it immediately and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown. A **Give other PCs** line shows the address, port and code together (`192.168.1.20:8090 ABCD-EFGH`) with a **Copy** button. Connected devices are listed with their command counts.
+4. *Connect To A Master PC*: on another PC, pick a master from **Masters found on this network** (or type its address), enter the access code and press **Connect**. Pasting the master's copied `address:port CODE` line into **Master address** fills the address, port and code in one go. This app then mirrors the master and stops using its own USB/Ethernet link; **Disconnect** returns to local scanning. The code is not saved, so it is asked for again each session.
+
+**Experiments on a remote PC.** A PC connected to a master follows the master's experiment automatically: it switches to the experiment the master selected, shows the master's settings (tapping channel, aerofoil angle, increments, drag shape, chart type, custom axes and the sweep start/end/step/delay) and plots the master's sweep and each logged point as they happen. If the remote PC connects mid-sweep, it plots from that moment. Experiment setup, Start Sweep, Log and Log Point are locked on the remote PC (the master refuses them too); only Stop Sweep is available, and only in *view and control* mode.
 
 **What remote devices can do.** *View only*: live lift, drag, pressure, air speed, fan and angle. *View and control*: additionally fan speed, motor angle, zero sensors, zero motor, LED settings and **Stop sweep**. Fan/angle/zero-motor are refused while a sweep is running on the master. Sweeps, CSV logging, calibration, firmware and Admin always stay on the master PC; CSV files are written to the master's Logs folder. The mode is checked by the master on every command, so switching to *view only* takes effect on devices that are already connected.
 
@@ -291,7 +293,7 @@ The app sends the JSON form of these commands (the V2.0.7 firmware no longer par
 
 ## Files written by the app
 
-Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password) and `wind-tunnel-config.json` (Logs folder, Ethernet target, remote-access mode/port and the remote-access **access code**, stored in plain text in a file readable only by the current user). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
+Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password) and `wind-tunnel-config.json` (Logs folder, Ethernet target, remote-access mode/port; the access code is deliberately not stored). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
 
 ## Safety and Git boundary
 
@@ -300,6 +302,13 @@ Do not modify or reflash firmware during normal UI development. Firmware flashin
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### v0.2.1
+
+- New: a remote PC now **follows the master's experiment**. It selects the same experiment, shows the master's settings and sweep range, and starts plotting the master's sweep or logged points automatically (also when joining mid-sweep). The Experiment Setup controls are locked on the remote PC, and the main process refuses the setup calls there as well. The master's relay snapshot gained `experimentId`, the experiment settings, the full `sweep` object, `loggedPointSeq` and `lastLoggedPoint` (no log paths or diagnostics).
+- Fix: on a remote PC the Start Sweep / Start Log buttons could be re-enabled by the normal button refresh, and Log Point stayed disabled after disconnecting from a master; both now follow the connection correctly.
+- Change: the remote-access **access code is regenerated on every app launch** and is never written to `wind-tunnel-config.json`; a code left in an older config file is ignored. Devices that were connected before a restart must enter the new code. **New code** still replaces it immediately and disconnects everyone.
+- New: Admin > Network > Remote Access shows a **Give other PCs** line (`address:port CODE`) with a **Copy** button, and pasting that line into *Master address* on the other PC fills the address, port and code. The code is deliberately not added to the LAN beacon, which is unauthenticated.
 
 ### v0.2.0
 

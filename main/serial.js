@@ -1,5 +1,6 @@
 const { CMD } = require('./protocol');
 const { state, publish, clamp, simulateSensors, appendAudit, API_VERSION } = require('./state');
+const { EthernetPort, DEFAULT_ETHERNET_PORT } = require('./ethernet');
 
 let SerialPort;
 try { ({ SerialPort } = require('serialport')); } catch (error) { console.log(`[serial] Failed to load 'serialport' module: ${error.message}`); SerialPort = null; }
@@ -72,6 +73,25 @@ let lastRxOkAt = 0;
 let watchdogGraceUntil = 0;
 let lastPortSignature = null;
 
+// Set by main/network.js from the saved Admin settings. USB always wins: this is only a fallback used
+// while no USB controller is present.
+let ethernetTarget = { enabled: false, host: '', port: DEFAULT_ETHERNET_PORT };
+
+// Set by main/network.js while another PC announces that it owns the controller over USB: the USB master
+// wins, so this app lets go of (and does not retry) its Ethernet link. null = not yielding.
+let ethernetYieldReason = null;
+
+function setEthernetYield(reason) {
+    if (reason === ethernetYieldReason) return;
+    ethernetYieldReason = reason;
+    if (!reason) requestRescan(100);
+}
+
+function setEthernetTarget(target) {
+    ethernetTarget = { enabled: Boolean(target.enabled), host: String(target.host || '').trim(), port: Number(target.port) || DEFAULT_ETHERNET_PORT };
+    requestRescan(100);
+}
+
 const disconnectListeners = [];
 
 function onUnexpectedDisconnect(listener) {
@@ -111,7 +131,9 @@ function jsonRequestFor(command, payload) {
         case CMD.SET_LUT: return { setvluchan: payload[0], setvluvel: Number(payload.readFloatLE(1).toFixed(6)) };
         case CMD.GET_LUT: return { getvlu: 0 };
         case CMD.CALIBRATE_DISPLAY: return { calibratedisplay: 0 };
-        case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4) };
+        // V2.0.7 added the dhcp flag (WindTunnelAPI 1.xlsx). It is always sent: the firmware only applies the
+        // address to the W5500 and re-creates the WebSocket server when `dhcp` is present, and it sends no reply.
+        case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4), dhcp: payload.length > 6 ? payload[6] : 0 };
         // Same trigger Process Control V2 sends ({"BL":1}); the controller resets into its USB HID
         // bootloader and does not reply, so this command is never in RESPONSE_COMMANDS.
         case CMD.ENTER_BOOTLOADER: return { BL: 1 };
@@ -338,6 +360,7 @@ function markLinkLost(reason, port = serialPort) {
     releasePort(port);
     state.connected = false;
     state.port = null;
+    state.transport = null;
     state.linkDegraded = false;
     publish();
     if (wasConnected) notifyUnexpectedDisconnect(reason);
@@ -357,14 +380,27 @@ function bindPort(port) {
     port.on('close', (error) => markLinkLost(error?.disconnected ? 'device disconnected' : 'port closed', port));
 }
 
-async function connectHardware(portPath, baudRate = 115200) {
-    if (!SerialPort) throw new Error('SerialPort dependency is not installed');
+function connectHardware(portPath, baudRate = 115200) {
+    return connectTarget({ transport: 'usb', path: portPath, baudRate });
+}
+
+function connectEthernet(host, port = DEFAULT_ETHERNET_PORT) {
+    return connectTarget({ transport: 'ethernet', host, port });
+}
+
+function createPort(target) {
+    if (target.transport === 'ethernet') return new EthernetPort({ host: target.host, port: target.port });
+    return new SerialPort({ path: target.path, baudRate: target.baudRate, autoOpen: false, dataBits: 8, stopBits: 1, parity: 'none', rtscts: false, dtr: true, rts: true });
+}
+
+async function connectTarget(target) {
+    if (target.transport !== 'ethernet' && !SerialPort) throw new Error('SerialPort dependency is not installed');
     if (connectInFlight) throw new Error('A connection attempt is already in progress');
     connectInFlight = true;
     state.connecting = true;
     publish();
     try {
-        return await openSession(portPath, baudRate);
+        return await openSession(target);
     } finally {
         connectInFlight = false;
         state.connecting = false;
@@ -372,12 +408,13 @@ async function connectHardware(portPath, baudRate = 115200) {
     }
 }
 
-async function openSession(portPath, baudRate) {
-    console.log(`[serial] Opening ${portPath} @ ${baudRate}...`);
+async function openSession(target) {
+    const portPath = target.transport === 'ethernet' ? `ws://${target.host}:${target.port}` : target.path;
+    console.log(`[serial] Opening ${portPath} (${target.transport})...`);
     if (serialPort) markLinkLost('replaced by a new connection', serialPort);
     stopWatchdog();
     linkGeneration += 1;
-    const port = new SerialPort({ path: portPath, baudRate, autoOpen: false, dataBits: 8, stopBits: 1, parity: 'none', rtscts: false, dtr: true, rts: true });
+    const port = createPort(target);
     serialPort = port;
     jsonBuffer = '';
     bindPort(port);
@@ -425,7 +462,7 @@ async function openSession(portPath, baudRate) {
 
     // Only now is the link real: the UI never reports Connected for a port that has not answered.
     console.log(`[serial] Connected, API version ${version[0]}`);
-    lastKnownPortPath = portPath;
+    if (target.transport === 'usb') lastKnownPortPath = portPath;
     connectFailureStreak = 0;
     nextConnectAttemptAt = 0;
     lastRxOkAt = Date.now();
@@ -434,6 +471,7 @@ async function openSession(portPath, baudRate) {
     state.simulation = false;
     state.linkDegraded = false;
     state.port = portPath;
+    state.transport = target.transport;
     publish();
     startWatchdog();
     // Whatever the controller was doing before this session (or before a link drop) is stale.
@@ -479,10 +517,28 @@ function disconnect() {
     lastKnownPortPath = null;
     state.connected = false;
     state.port = null;
+    state.transport = null;
     state.linkDegraded = false;
     state.simulation = false;
     state.fanSpeed = 0;
     publish();
+}
+
+// Shutdown path: releases the link and waits for the close to complete. For Ethernet this matters --
+// exiting with the WebSocket still open makes the controller refuse new connections for ~23 s.
+async function closeLink() {
+    const port = serialPort;
+    serialPort = null;
+    linkGeneration += 1;
+    stopWatchdog();
+    jsonBuffer = '';
+    rejectPending(new LinkError('Application closing'));
+    commandQueue = Promise.resolve();
+    if (port) port.removeAllListeners('data');
+    await closePortQuietly(port);
+    state.connected = false;
+    state.port = null;
+    state.transport = null;
 }
 
 function startWatchdog() {
@@ -531,21 +587,42 @@ function findTargetPort(ports) {
 }
 
 async function scanOnce() {
-    if (scanBusy || connectInFlight || state.connected || state.simulation || !SerialPort) return;
-    if (Date.now() < nextConnectAttemptAt) return;
+    if (scanBusy || connectInFlight || state.simulation || state.transport === 'remote') return;
+    // An Ethernet session is only a stand-in for USB, so keep looking for the USB controller while on it.
+    const onEthernet = state.connected && state.transport === 'ethernet';
+    if (state.connected && !onEthernet) return;
+    if (onEthernet && ethernetYieldReason) { markLinkLost(ethernetYieldReason, serialPort); return; }
+    if (!SerialPort && !ethernetTarget.enabled) return;
+    if (!onEthernet && Date.now() < nextConnectAttemptAt) return;
     scanBusy = true;
     try {
         let ports = [];
         let listed = true;
-        try { ports = await SerialPort.list(); }
+        try { ports = SerialPort ? await SerialPort.list() : []; }
         catch (error) { listed = false; console.log(`[serial] Port listing failed: ${error.message}`); }
         const signature = ports.map((p) => `${p.path}(${p.vendorId || '?'}:${p.productId || '?'})`).join(', ') || 'none';
         if (signature !== lastPortSignature) { lastPortSignature = signature; console.log(`[serial] Ports: ${signature}`); }
-        if (state.connected || connectInFlight) return;
+        if (connectInFlight) return;
         let targetPath = findTargetPort(ports)?.path;
         // If the OS cannot enumerate right now, fall back to the last good path rather than idling.
         if (!targetPath && !listed) targetPath = lastKnownPortPath;
-        if (!targetPath) return;
+        if (onEthernet) {
+            if (!targetPath) return;
+            // USB is the master link: hand the controller over from Ethernet. Listeners stop any sweep.
+            markLinkLost('USB controller detected; USB takes priority over Ethernet', serialPort);
+        } else if (state.connected) return;
+        if (!targetPath) {
+            if (!ethernetTarget.enabled || !ethernetTarget.host || ethernetYieldReason) return;
+            console.log(`[serial] No USB controller; trying Ethernet ${ethernetTarget.host}:${ethernetTarget.port}`);
+            try { await connectEthernet(ethernetTarget.host, ethernetTarget.port); }
+            catch (error) {
+                console.log(`[serial] Ethernet connect failed: ${error.message}`);
+                connectFailureStreak += 1;
+                nextConnectAttemptAt = Date.now() + Math.min(500 * 2 ** (connectFailureStreak - 1), MAX_CONNECT_BACKOFF_MS);
+                publish();
+            }
+            return;
+        }
         console.log(`[serial] Target device found at ${targetPath}`);
         try { await connectHardware(targetPath, 115200); }
         catch (error) {
@@ -637,7 +714,11 @@ module.exports = {
     USB_PRODUCT_ID,
     sendBinary,
     connectHardware,
+    connectEthernet,
+    setEthernetTarget,
+    setEthernetYield,
     disconnect,
+    closeLink,
     startAutoConnect,
     listPorts,
     setFanSpeed,

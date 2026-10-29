@@ -15,6 +15,13 @@ const state = {
     linkDegraded: false,
     simulation: process.argv.includes('--simulate') || process.env.WIND_TUNNEL_SIMULATION === '1',
     port: null,
+    // How this app reaches the tunnel: 'usb' (serial, always preferred), 'ethernet' (direct WebSocket to
+    // the controller) or 'remote' (a relay hosted by another copy of this app). null while offline.
+    transport: null,
+    // Remote sessions only: whether the master lets this client send commands ('view' | 'control').
+    remoteAccess: null,
+    // Public network status shown in Admin (relay clients, relay port); filled in by main/network.js.
+    network: { relay: { running: false, mode: 'off', port: null, clients: [] }, remote: { connected: false, host: null }, discovered: [], ethernetYield: null },
     apiVersion: API_VERSION,
     fanSpeed: 0,
     angle: 0,
@@ -62,10 +69,20 @@ const state = {
 
 const audit = [];
 
+const publishListeners = [];
+
+// Lets main/network.js mirror every state change to relay clients without state.js depending on it.
+function onPublish(listener) {
+    publishListeners.push(listener);
+}
+
 function publish() {
     const admin = require('./admin');
     state.adminUnlocked = admin.isUnlocked();
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('state:update', state);
+    publishListeners.forEach((listener) => {
+        try { listener(state); } catch (_error) { /* a relay failure must never break the local UI */ }
+    });
 }
 
 function clamp(value, min, max) {
@@ -95,4 +112,4 @@ function pushEvent(channel, payload) {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
-module.exports = { API_VERSION, state, setMainWindow, publish, clamp, simulateSensors, appendAudit, audit, pushEvent };
+module.exports = { API_VERSION, state, setMainWindow, publish, onPublish, clamp, simulateSensors, appendAudit, audit, pushEvent };

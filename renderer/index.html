@@ -211,6 +211,7 @@
             <div class="admin-tabs">
                 <button class="tab-button active" data-admin-tab="dashboard">📊 Dashboard</button>
                 <button class="tab-button" data-admin-tab="calibrator">◌ Calibrator</button>
+                <button class="tab-button" data-admin-tab="network">🌐 Network</button>
                 <button class="tab-button" data-admin-tab="bootloader">🔧 Bootloader</button>
                 <button class="tab-button" data-admin-tab="updates">🔄 Updates</button>
                 <button class="tab-button" data-admin-tab="settings">⚙ Settings</button>
@@ -228,7 +229,7 @@
                                 <dt>Transport</dt><dd id="adminTransport">USB serial · waiting</dd>
                                 <dt>Retries</dt><dd id="adminRetries">0</dd>
                                 <dt>Errors</dt><dd id="adminErrors">0</dd>
-                                <dt>TCP</dt><dd>Preserved legacy configuration</dd>
+                                <dt>Remote access</dt><dd id="adminRemoteAccess">Off</dd>
                             </dl>
                             <div class="flex gap-2 mt-2">
                                 <button class="btn btn-secondary btn-sm" id="refreshDiagnostics">Refresh Diagnostics</button>
@@ -285,15 +286,87 @@
                             <p id="lutAck" class="text-xs opacity-60 mt-2">No write yet this session.</p>
                         </div>
                     </article>
+                </div>
+            </div>
+
+            <!-- NETWORK TAB -->
+            <div id="networkTab" class="tab-content">
+                <div class="section-intro">
+                    <p>USB is always the master link. Ethernet is used only when no USB controller is connected. Other devices can watch (and, if you allow it, control) through this PC, which is the only place view-only access can be enforced because the controller itself has no concept of users.</p>
+                </div>
+                <div class="admin-grid">
                     <article class="card bg-base-200 border border-base-300">
                         <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Network Configuration</h2></div>
-                            <div class="split">
-                                <label>IP<input id="networkIp" class="input input-bordered input-sm w-full" value="192.168.1.150"></label>
-                                <label>Port<input id="networkPort" type="number" class="input input-bordered input-sm w-full" value="80"></label>
+                            <div class="panel-heading"><h2 class="card-title text-base">Controller Network Settings</h2><span id="netLinkPill" class="badge badge-neutral">Offline</span></div>
+                            <p class="text-xs opacity-70">Written to the controller (V2.0.7). Needs a connected controller, Admin unlocked and no sweep running. The controller sends no reply to this command, so it is reported as sent, not acknowledged.</p>
+                            <label class="flex items-center gap-2 mt-2"><input type="checkbox" id="networkDhcp" class="checkbox checkbox-sm" checked> Obtain the address automatically (DHCP)</label>
+                            <div class="split mt-2">
+                                <label>Static IP<input id="networkIp" class="input input-bordered input-sm w-full" value="192.168.1.150"></label>
+                                <label>Port<input id="networkPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
                             </div>
-                            <button id="saveNetwork" class="btn btn-primary btn-sm mt-2">Save Network Settings</button>
-                            <p id="networkAck" class="text-xs opacity-60 mt-2">TCP behavior is unchanged from the legacy app.</p>
+                            <button id="saveNetwork" class="btn btn-primary btn-sm mt-2">Send To Controller</button>
+                            <p id="networkAck" class="text-xs opacity-60 mt-2">Controller defaults: DHCP on, port 1245. With DHCP the address is shown on the controller's touchscreen (Settings page); it cannot be read back over the API.</p>
+                        </div>
+                    </article>
+
+                    <article class="card bg-base-200 border border-base-300">
+                        <div class="card-body">
+                            <div class="panel-heading"><h2 class="card-title text-base">Connect To Controller Over Ethernet</h2></div>
+                            <label class="flex items-center gap-2"><input type="checkbox" id="ethEnabled" class="checkbox checkbox-sm"> Connect over Ethernet when no USB controller is present</label>
+                            <div class="split mt-2">
+                                <label>Controller address<input id="ethHost" class="input input-bordered input-sm w-full" placeholder="e.g. 192.168.1.150"></label>
+                                <label>Port<input id="ethPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
+                            </div>
+                            <div class="button-row mt-2">
+                                <button id="saveEthernet" class="btn btn-primary btn-sm">Save</button>
+                                <button id="scanNetwork" class="btn btn-secondary btn-sm">Scan Network</button>
+                            </div>
+                            <p id="ethAck" class="text-xs opacity-60 mt-2">The controller serves one Ethernet client at a time, so the first app to connect becomes the master and everyone else connects to it. If USB is plugged in (here or on another PC on this network), USB takes over.</p>
+                            <p id="ethYield" class="text-xs mt-2 hidden" style="color: var(--color-warning, #e6a23c)"></p>
+                            <div id="scanResults" class="log mt-2"></div>
+                        </div>
+                    </article>
+
+                    <article class="card bg-base-200 border border-base-300">
+                        <div class="card-body">
+                            <div class="panel-heading"><h2 class="card-title text-base">Remote Access (this PC is the master)</h2><span id="relayPill" class="badge badge-neutral">Off</span></div>
+                            <div class="split">
+                                <label>Other devices may
+                                    <select id="relayMode" class="select select-bordered select-sm w-full">
+                                        <option value="off">Not connect</option>
+                                        <option value="view">View live data only</option>
+                                        <option value="control">View and control</option>
+                                    </select>
+                                </label>
+                                <label>Port<input id="relayPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
+                            </div>
+                            <div class="mt-2 text-sm">Access code <strong id="relayCode" class="font-mono">----</strong>
+                                <button id="regenCode" class="btn btn-ghost btn-xs">New code</button>
+                            </div>
+                            <div class="button-row mt-2"><button id="saveRelay" class="btn btn-primary btn-sm">Save</button></div>
+                            <p id="relayAck" class="text-xs opacity-60 mt-2">Sweeps, logging, calibration, firmware and Admin always stay on this PC. Traffic is not encrypted: use this on a trusted network.</p>
+                            <p class="text-xs mt-2">Browser address: <span id="relayUrls" class="font-mono">-</span></p>
+                            <div class="text-xs font-bold mt-2">Connected devices</div>
+                            <div id="relayClients" class="log"></div>
+                        </div>
+                    </article>
+
+                    <article class="card bg-base-200 border border-base-300">
+                        <div class="card-body">
+                            <div class="panel-heading"><h2 class="card-title text-base">Connect To A Master PC</h2><span id="remotePill" class="badge badge-neutral">Not connected</span></div>
+                            <p class="text-xs opacity-70">Use this when the tunnel is attached to another PC. This app then mirrors that PC and stops using its own USB/Ethernet link.</p>
+                            <div class="text-xs font-bold mt-2">Masters found on this network</div>
+                            <div id="discoveredMasters" class="log"></div>
+                            <div class="split mt-2">
+                                <label>Master address<input id="remoteHost" class="input input-bordered input-sm w-full" placeholder="e.g. 192.168.1.20"></label>
+                                <label>Port<input id="remotePort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
+                            </div>
+                            <label class="mt-2">Access code<input id="remoteCode" class="input input-bordered input-sm w-full font-mono" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false"></label>
+                            <div class="button-row mt-2">
+                                <button id="remoteConnect" class="btn btn-primary btn-sm">Connect</button>
+                                <button id="remoteDisconnect" class="btn btn-sm btn-outline">Disconnect</button>
+                            </div>
+                            <p id="remoteAck" class="text-xs opacity-60 mt-2">Not connected.</p>
                         </div>
                     </article>
                 </div>

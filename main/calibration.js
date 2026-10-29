@@ -11,6 +11,7 @@ function floatBuffer(value) {
 
 function guard() {
     if (!admin.isUnlocked()) return 'Admin session is locked.';
+    if (state.transport === 'remote') return 'Calibration is only available on the master PC that owns the controller link.';
     if (state.sweep.running) return 'Stop the active sweep before writing calibration.';
     return null;
 }
@@ -253,17 +254,28 @@ async function calibrateDisplay() {
     }
 }
 
-async function setNetwork({ ip0, ip1, ip2, ip3, port }) {
+// V2.0.7 firmware stores ip0-ip3, port and the dhcp flag in EEPROM and immediately re-applies them to
+// the W5500 (DHCP can block the API for ~5 s). It sends NO reply to this command, so the result is
+// reported as sent, never as acknowledged; the operator confirms by reconnecting over Ethernet.
+async function setNetwork({ ip0, ip1, ip2, ip3, port, dhcp = false }) {
     const blocked = guard();
     if (blocked) return { ok: false, acknowledged: false, message: blocked };
-    const payload = Buffer.alloc(6);
-    payload[0] = ip0; payload[1] = ip1; payload[2] = ip2; payload[3] = ip3;
-    payload.writeUInt16LE(port, 4);
+    const octets = [ip0, ip1, ip2, ip3].map(Number);
+    const portNumber = Number(port);
+    if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return { ok: false, acknowledged: false, message: 'Each IP address part must be a whole number from 0 to 255.' };
+    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) return { ok: false, acknowledged: false, message: 'Port must be a whole number from 1 to 65535.' };
+    const payload = Buffer.alloc(7);
+    octets.forEach((octet, index) => { payload[index] = octet; });
+    payload.writeUInt16LE(portNumber, 4);
+    payload[6] = dhcp ? 1 : 0;
+    const address = `${octets.join('.')}:${portNumber}`;
     try {
         await serial.sendBinary(CMD.SET_NETWORK, payload, { source: 'calibrator' });
-        return { ok: true, acknowledged: true, message: `Network address ${ip0}.${ip1}.${ip2}.${ip3}:${port} acknowledged.` };
+        const summary = dhcp ? `DHCP enabled on port ${portNumber} (the static address is kept but unused)` : `static address ${address}`;
+        const viaEthernet = state.transport === 'ethernet' ? ' This Ethernet link will drop while the controller restarts its network; it reconnects automatically.' : '';
+        return { ok: true, acknowledged: false, sent: true, message: `Network settings sent: ${summary}. The controller does not reply to this command; check the touchscreen Settings page for its address.${viaEthernet}` };
     } catch (error) {
-        return { ok: false, acknowledged: false, message: `Write not acknowledged: ${error.message}` };
+        return { ok: false, acknowledged: false, message: `Network settings were not sent: ${error.message}` };
     }
 }
 

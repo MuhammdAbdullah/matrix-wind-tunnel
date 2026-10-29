@@ -19,6 +19,7 @@ function startSensorSampleTimer(sampleTimeMs = DEFAULT_SAMPLE_TIME_MS) {
     if (sensorTimer) clearInterval(sensorTimer);
     sensorTimer = setInterval(async () => {
         if (state.simulation) return; // renderer-visible simulated sensors are driven elsewhere
+        if (state.transport === 'remote') return; // the master polls the hardware; this app only mirrors its readings
         if (state.sweep.running) return; // the active sweep's own tick already reads+logs each cycle
         if (!state.connected) return; // nothing to read; the serial layer is already reconnecting
         if (sensorReadInFlight) return; // never stack reads behind a slow/unresponsive controller

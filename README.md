@@ -7,6 +7,7 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
 - [What the app does](#what-the-app-does)
 - [Getting started](#getting-started)
 - [How it works](#how-it-works)
+- [Ethernet and remote access](#ethernet-and-remote-access)
 - [Experiments](#experiments)
 - [API reference](#api-reference)
   - [Renderer API (`window.windTunnel`)](#renderer-api-windwindtunnel)
@@ -21,17 +22,18 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
 
 | Area | Capability |
 |---|---|
-| **Connection** | Scans for the controller (USB VID `0x12BF`, PID `0xF010`), connects at `115200` baud, verifies API version `2`, and drops the link immediately on unplug and within 8 s if the controller stops answering, and reconnects automatically (rescanning by VID/PID). |
+| **Connection** | Scans for the controller (USB VID `0x12BF`, PID `0xF010`), connects at `115200` baud, verifies API version `2`, and drops the link immediately on unplug and within 8 s if the controller stops answering, and reconnects automatically (rescanning by VID/PID). USB is always preferred; with no USB controller the app can connect over **Ethernet** instead (V2.0.7 firmware, WebSocket). |
 | **Control** | Live lift (mN), drag (mN), pressure (Pa) and air velocity (m/s); fan speed `0–100 %`; motor angle `-180°…180°`; zero sensors; zero motor; LED animation/ambient settings. |
 | **Experiments** | Eight experiments (pressure-to-velocity, pressure-tapped cylinder/aerofoil, lift, drag, stem racing, sensors vs time, custom X/Y), each with its own traces, axes and CSV columns. A live chart and an experiment-history chart are kept separate. |
 | **Sweeps** | Timed angle sweeps and fan-speed sweeps that move the actuator, wait for it to settle, read the sensors, log a point and advance. |
 | **Logging** | CSV files (`WindTunnelLog_<timestamp>.csv` style) in a configurable folder; the save location is asked once per experiment. |
 | **Admin** | Password-gated area (10-minute session) with diagnostics (raw TX/RX, retry/error counters, activity log), sensor scalers, 10-point velocity LUT (guided 10 %-step pressure capture converted to air speed, saved with one Save Table button), display calibration, network IP/port, HID bootloader firmware update, app-update status and an audit trail. |
+| **Network** | Admin > Network: controller IP / DHCP / port, Ethernet connection with network scan, **remote access** (other PCs, tablets and phones can watch or also control through the master PC, set to *off*, *view only* or *view and control*), discovery of masters on the LAN, and connecting this app to another PC as a remote client. See [Ethernet and remote access](#ethernet-and-remote-access). |
 | **Simulation** | `--simulate` replaces the hardware with synthetic sensor data for development without a tunnel. |
 
 ## Getting started
 
-Requirements: Windows, Node.js, and (for real hardware) the Wind Tunnel controller on USB.
+Requirements: Windows, Node.js, and (for real hardware) the Wind Tunnel controller on USB, or on the network over Ethernet (controller firmware V2.0.7 or newer).
 
 ```powershell
 npm install
@@ -63,9 +65,12 @@ The production build shows "Searching for controller…" and connects as soon as
 │  main/calibration.js  scalers / LUT / display / network (Admin-gated)       │
 │  main/admin.js        scrypt password hash, 10-minute session               │
 │  main/bootloader.js   HID bootloader protocol  ─ main/firmware.js (gated)   │
+│  main/ethernet.js     WebSocket link to the controller (Ethernet)           │
+│  main/network.js      relay for other devices, discovery, remote client     │
+│  main/control.js      fan/angle/zero/LED commands (local or forwarded)      │
 └────────────────┬───────────────────────────────────────────────────────────┘
-                 │ USB serial 115200 baud            USB HID (bootloader mode)
-            Wind Tunnel controller (firmware V2.0.6)
+                 │ USB serial 115200 baud   or   Ethernet WebSocket :1245   USB HID (bootloader)
+            Wind Tunnel controller (firmware V2.0.7)
 ```
 
 **Process boundary.** The renderer never touches serial, HID or the filesystem. It only calls `window.windTunnel.*`, which maps 1:1 to `ipcMain.handle` channels in `main.js`.
@@ -93,6 +98,38 @@ Values are the controller's raw floats; drag shape and tapping channel are metad
 **Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
 **Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. VID/PID are entered in hexadecimal, with or without a `0x` prefix (`12BF`, `0xF010`); if they are missing, the error lists the USB HID PIDs currently present under that VID. **Trigger Bootloader** stops the fan and sends `{"BL":1}` over the application serial link (the same command Process Control V2 uses; no reply is expected), after which Connect waits for the HID bootloader to enumerate. That command is **not yet verified on Wind Tunnel V2.0.6 hardware**; if the controller ignores it, enter bootloader mode from its touchscreen "Bootloader" menu instead. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. A file that is not an approved Wind Tunnel firmware image is rejected before it is opened, and a rejected pick never replaces a hex file that is already loaded. See `CLAUDE.md` for the full details and known caveats.
+
+## Ethernet and remote access
+
+The V2.0.7 controller serves its JSON API over a **WebSocket** on port `1245` (one text message per request and reply). The IP address, port and a **DHCP** flag are stored on the controller; DHCP is on by default and the address it obtains is shown only on the controller's touchscreen Settings page. The controller accepts **one Ethernet client at a time** and has no notion of users or permissions, so everything below is enforced by this app.
+
+**Who is master.** USB is always the master link. With no USB controller, the first app to connect over Ethernet is the master. Only the master talks to the controller; everyone else connects to the master.
+
+| Situation | What happens |
+|---|---|
+| USB controller present | The app uses USB. Ethernet is only a fallback. |
+| No USB, Ethernet enabled | The app connects to the saved controller address over Ethernet and becomes the master (full control, sweeps, logging, calibration). |
+| Ethernet master on one PC, USB plugged into another | The Ethernet PC releases the controller within a couple of seconds and shows who has it; it reconnects by itself when the USB master goes away. |
+| Another device wants to watch or control | It connects to the master's relay (another copy of the app, or a browser page), not to the controller. |
+
+**Setting it up (Admin > Network).**
+
+1. *Controller Network Settings*: DHCP on/off, static IP and port, then **Send To Controller** (needs a connected controller, Admin unlocked and no sweep running). The controller sends no reply to this command, so it is reported as *sent*, not acknowledged; the IP cannot be read back.
+2. *Connect To Controller Over Ethernet*: tick the option, enter the controller's address and port (default `1245`) or use **Scan Network** (finds controllers on this PC's local /24 subnets) and press **Save**. Use a switch/router with DHCP, or give the controller a static IP in the PC's subnet first.
+3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated; **New code** replaces it and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown. Connected devices are listed with their command counts.
+4. *Connect To A Master PC*: on another PC, pick a master from **Masters found on this network** (or type its address), enter the access code and press **Connect**. This app then mirrors the master and stops using its own USB/Ethernet link; **Disconnect** returns to local scanning. The code is not saved, so it is asked for again each session.
+
+**What remote devices can do.** *View only*: live lift, drag, pressure, air speed, fan and angle. *View and control*: additionally fan speed, motor angle, zero sensors, zero motor, LED settings and **Stop sweep**. Fan/angle/zero-motor are refused while a sweep is running on the master. Sweeps, CSV logging, calibration, firmware and Admin always stay on the master PC; CSV files are written to the master's Logs folder. The mode is checked by the master on every command, so switching to *view only* takes effect on devices that are already connected.
+
+**Browser page.** The master serves a small page (`renderer/remote/`) so a tablet or phone can connect with just a browser: enter the access code, then watch (and, if allowed, control) the tunnel.
+
+**Security.** Access needs the code; 5 wrong tries lock that address out for a minute; at most 8 devices and 20 commands per second per device. Traffic is **not encrypted** and the controller's own port has no authentication, so use this on a trusted network or a VPN, and never forward port `1245` to the internet. Anything that connects straight to the controller's port bypasses the view/control rule.
+
+**Hardware behaviour worth knowing** (verified on a real controller):
+
+- If a client disappears **without a proper WebSocket close** (process killed, Ctrl-C), the controller refuses all new connections (`ECONNREFUSED`) for about 23 seconds. The app always closes politely (including on quit), and keeps retrying, so after a crash the connection returns by itself. Quit with the window's close button, not Ctrl-C.
+- Masters announce themselves with a UDP broadcast (port `8091`, no secrets), so discovery only works on the same subnet; across a VPN enter the master's address by hand. Windows Firewall may ask to allow the app on private networks the first time.
+- If the master loses its link, the controller keeps its last fan speed; remote devices cannot stop it from afar.
 
 ## Experiments
 
@@ -174,7 +211,7 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %…100 %, each 0–100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
 | `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0–100) for the pressure capture. Admin-gated except for 0 % (stop). |
 | `calibrateDisplay()` | `calibration:calibrateDisplay` | Run touchscreen calibration. |
-| `setNetwork(ip0, ip1, ip2, ip3, port)` | `calibration:setNetwork` | Store IP and port on the controller. |
+| `setNetwork(ip0, ip1, ip2, ip3, port, dhcp)` | `calibration:setNetwork` | Store IP, port and the DHCP flag on the controller (V2.0.7). The controller sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
 
 **Admin and firmware**
 
@@ -201,6 +238,20 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 
 Every firmware call returns `{ ok, stage, message, … }`; a locked Admin session yields `{ ok: false, reason: 'admin-locked' }`.
 
+**Network (Admin only; a locked session returns `{ ok: false, message: 'Admin session is locked.' }`)**
+
+| Method | IPC channel | Description |
+|---|---|---|
+| `getNetworkSettings()` | `network:getSettings` | `{ ethernet { enabled, host, port }, relay { mode, port, accessCode }, remote { host, port }, addresses, relayRunning }`. |
+| `saveEthernetSettings({ enabled, host, port })` | `network:saveEthernet` | Save the controller's Ethernet address (used only when no USB controller is present). |
+| `saveRelaySettings({ mode, port })` | `network:saveRelay` | `mode` is `off`, `view` or `control`. Restarts the relay if the port changed; applies to connected devices immediately. |
+| `regenerateAccessCode()` | `network:regenerateCode` | New access code; disconnects all remote devices. |
+| `scanNetwork(port)` | `network:scan` | Probe this PC's /24 subnets for controllers → `{ devices: [{ host, port, apiVersion }] }`. |
+| `connectRemote(host, port, code)` | `network:connectRemote` | Become a remote client of another PC's relay. |
+| `disconnectRemote()` | `network:disconnectRemote` | Leave remote mode and resume local scanning. |
+
+`disconnect()` also ends a remote session. In remote mode `setFanSpeed`, `setAngle`, `setLeds`, `zeroSensors`, `zeroMotor` and `stopSweep` are forwarded to the master; sweeps, logging and calibration return a refusal.
+
 ### Push events
 
 Register with these listeners; each is pushed from the main process.
@@ -214,7 +265,7 @@ Register with these listeners; each is pushed from the main process.
 
 ### State object
 
-Key fields of `state` (see `main/state.js`): `connected`, `simulation`, `port`, `apiVersion`, `fanSpeed`, `angle`, `sensors { lift, drag, pressure, velocity }`, `diagnostics { tx, rx, retries, errors }`, `experimentId`, `tapping { channel, increment }`, `aerofoilAngle`, `manualAngle { increment }`, `dragShape`, `fanSpeedIncrement`, `stemRacingChartType`, `customAxes { x, y }`, `leds`, `sweep { type, running, start, end, step, delay, current }`, `sensorSampleSeq` (bumps on each genuinely new reading), `loggedPointSeq` / `lastLoggedPoint` (bump on each Log Point), `logging { active, path, rowCount, experimentId }`, `adminUnlocked`.
+Key fields of `state` (see `main/state.js`): `connected`, `simulation`, `port`, `apiVersion`, `fanSpeed`, `angle`, `sensors { lift, drag, pressure, velocity }`, `diagnostics { tx, rx, retries, errors }`, `experimentId`, `tapping { channel, increment }`, `aerofoilAngle`, `manualAngle { increment }`, `dragShape`, `fanSpeedIncrement`, `stemRacingChartType`, `customAxes { x, y }`, `leds`, `sweep { type, running, start, end, step, delay, current }`, `sensorSampleSeq` (bumps on each genuinely new reading), `loggedPointSeq` / `lastLoggedPoint` (bump on each Log Point), `logging { active, path, rowCount, experimentId }`, `adminUnlocked`. Network fields: `transport` (`'usb'` / `'ethernet'` / `'remote'` / `null`), `remoteAccess` (`'view'` / `'control'` when this app is a remote client), and `network { relay { running, mode, port, clients[] }, remote { connected, host, hardwareTransport }, discovered[], ethernetYield }`.
 
 ### Controller serial protocol
 
@@ -234,13 +285,13 @@ USB serial, `115200` baud. Request frame: `':' + command byte + payload + ';' + 
 | `J` | index, float32 | Set LUT entry | ack |
 | `K` | – | Read LUT | 10 × float32 |
 | `L` | – | Calibrate display | ack |
-| `M` | 4 IP bytes, uint16 LE port | Store network address | ack |
+| `M` | 4 IP bytes, uint16 LE port, DHCP flag byte | Store network address (V2.0.7 JSON: `ip0`–`ip3`, `port`, `dhcp`) | none |
 
-The command set is defined by the approved firmware (`WindTunnel V2.0.6`) and must not be extended from this app.
+The app sends the JSON form of these commands (the V2.0.7 firmware no longer parses the binary frames), as one text message per request when connected over Ethernet. The command set is defined by the firmware and must not be extended from this app.
 
 ## Files written by the app
 
-Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password) and `wind-tunnel-config.json` (Logs folder). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
+Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password) and `wind-tunnel-config.json` (Logs folder, Ethernet target, remote-access mode/port and the remote-access **access code**, stored in plain text in a file readable only by the current user). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
 
 ## Safety and Git boundary
 
@@ -252,6 +303,12 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ### Unreleased
 
+- New: **Ethernet** support for the V2.0.7 controller (WebSocket on port `1245`). With no USB controller the app connects over Ethernet using the address saved in Admin > Network; USB is always preferred and takes over automatically when it appears. Verified on a real controller: the WebSocket API answers as documented, and clients must close properly (an abrupt disconnect blocks new connections for ~23 s).
+- New: **Remote access.** The PC that owns the controller (USB, or Ethernet when there is no USB) can host a relay so other PCs, tablets and phones can watch, or also control, the tunnel. Admin chooses *off*, *view only* or *view and control*; access needs a code; sweeps, logging, calibration, firmware and Admin stay on the master. A browser page is served for tablets/phones; the app can also connect to another PC as a remote client.
+- New: masters announce themselves on the LAN and are listed in Admin > Network; an app holding the controller over Ethernet steps aside for a USB master.
+- New: Admin > Network tab. The network card moved there from the Calibrator tab and gained the DHCP option and the V2.0.7 default port `1245`. The IP/port/DHCP command is reported as *sent* rather than *acknowledged* because the controller does not reply.
+- Change: the app now depends on `ws`; fan/angle/LED/zero commands live in `main/control.js`.
+- API: added `getNetworkSettings`, `saveEthernetSettings`, `saveRelaySettings`, `regenerateAccessCode`, `scanNetwork`, `connectRemote`, `disconnectRemote`; `setNetwork` takes a `dhcp` argument. The state object gained `transport`, `remoteAccess` and `network`.
 - New: Admin > Bootloader "Trigger Bootloader" is enabled and sends `{"BL":1}` to the connected controller (same command Process Control V2 uses) after stopping the fan, then Connect opens the USB HID bootloader. Unverified on Wind Tunnel V2.0.6 hardware; the touchscreen "Bootloader" entry remains the fallback.
 - Fix: bootloader VID/PID fields accept hexadecimal with or without `0x` (`F010`, `0x12BF`); previously un-prefixed hex was rejected. When an ID is missing, the message lists the USB HID PIDs currently present under that VID.
 - Fix: bootloader device detection (`HID.devices()`) now works; the `node-hid` module was being destructured so only the device class was available.

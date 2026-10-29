@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wind Tunnel Remote</title>
+    <style>
+        :root { color-scheme: dark light; --bg: #08111c; --card: #101c2b; --line: #22344a; --text: #e8f0f8; --muted: #8aa0b6; --accent: #3da5ff; --ok: #2fbf71; --warn: #e6a23c; --bad: #e5484d; }
+        @media (prefers-color-scheme: light) { :root { --bg: #f2f5f9; --card: #ffffff; --line: #d5dee8; --text: #14202e; --muted: #5b6e82; --accent: #0b6fd1; } }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+        h1 { margin: 0; font-size: 1.15rem; letter-spacing: .12em; text-transform: uppercase; }
+        .pill { padding: 3px 10px; border-radius: 999px; font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: var(--line); }
+        .pill.ok { background: var(--ok); color: #05210f; } .pill.warn { background: var(--warn); color: #2b1b00; } .pill.bad { background: var(--bad); color: #fff; }
+        main { padding: 16px; max-width: 760px; margin: 0 auto; display: grid; gap: 16px; }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+        .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .metric { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+        .metric span { display: block; font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+        .metric strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+        .metric small { color: var(--muted); margin-left: 4px; }
+        label { display: block; margin-top: 12px; font-size: .9rem; }
+        input[type=range] { width: 100%; }
+        input[type=text] { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; letter-spacing: .1em; text-transform: uppercase; }
+        button { padding: 10px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+        button.secondary { background: transparent; color: var(--text); }
+        button:disabled { opacity: .45; cursor: not-allowed; }
+        .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+        .note { color: var(--muted); font-size: .85rem; margin: 8px 0 0; }
+        .hidden { display: none; }
+        #message { min-height: 1.2em; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Wind Tunnel</h1>
+    <span id="status" class="pill">Not connected</span>
+</header>
+<main>
+    <section id="loginCard" class="card">
+        <strong>Connect to this wind tunnel</strong>
+        <p class="note">Enter the access code shown in the app's Admin &rarr; Network tab on the PC that is connected to the tunnel.</p>
+        <label for="code">Access code</label>
+        <input id="code" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9">
+        <div class="row"><button id="connect">Connect</button></div>
+        <p id="loginMessage" class="note"></p>
+    </section>
+
+    <section id="liveCard" class="card hidden">
+        <div class="grid">
+            <div class="metric"><span>Lift</span><strong id="lift">-</strong><small>mN</small></div>
+            <div class="metric"><span>Drag</span><strong id="drag">-</strong><small>mN</small></div>
+            <div class="metric"><span>Pressure</span><strong id="pressure">-</strong><small>Pa</small></div>
+            <div class="metric"><span>Air speed</span><strong id="velocity">-</strong><small>m/s</small></div>
+            <div class="metric"><span>Fan</span><strong id="fan">-</strong><small>%</small></div>
+            <div class="metric"><span>Angle</span><strong id="angle">-</strong><small>&deg;</small></div>
+        </div>
+        <p id="sweepNote" class="note hidden">A sweep is running on the master PC.</p>
+    </section>
+
+    <section id="controlCard" class="card hidden">
+        <strong>Controls</strong>
+        <label for="fanSlider">Fan speed <output id="fanOut">0</output>%</label>
+        <input id="fanSlider" type="range" min="0" max="100" value="0">
+        <label for="angleSlider">Motor angle <output id="angleOut">0</output>&deg;</label>
+        <input id="angleSlider" type="range" min="-180" max="180" value="0">
+        <div class="row">
+            <button id="zeroSensors" class="secondary">Zero sensors</button>
+            <button id="zeroMotor" class="secondary">Zero motor</button>
+            <button id="stopSweep" class="secondary">Stop sweep</button>
+        </div>
+    </section>
+
+    <p id="message" class="note"></p>
+    <div class="row"><button id="disconnect" class="secondary hidden">Disconnect</button></div>
+</main>
+<script src="remote.js"></script>
+</body>
+</html>

@@ -10,6 +10,8 @@ const calibration = require('./main/calibration');
 const firmware = require('./main/firmware');
 const logging = require('./main/logging');
 const updater = require('./main/updater');
+const control = require('./main/control');
+const network = require('./main/network');
 
 let mainWindow;
 
@@ -41,25 +43,20 @@ function createWindow() {
 ipcMain.handle('device:getState', () => state);
 ipcMain.handle('device:listPorts', () => serial.listPorts());
 ipcMain.handle('device:connectPort', (_event, portPath, baudRate = 115200) => serial.connectHardware(portPath, baudRate));
-ipcMain.handle('device:disconnect', () => {
+ipcMain.handle('device:disconnect', async () => {
+    if (state.transport === 'remote') { await network.disconnectRemote(); return state; }
     // Stop first: the auto-scan reconnects within seconds and a surviving sweep would drive the fan on the new session.
     sweeps.stopSweep();
     serial.disconnect();
     return state;
 });
-ipcMain.handle('device:setFanSpeed', (_event, value) => serial.setFanSpeed(value, { source: 'control' }));
-ipcMain.handle('device:setAngle', (_event, value) => serial.setAngle(value, { source: 'control' }));
-ipcMain.handle('device:setLeds', (_event, payload) => serial.setLeds({ ...payload, source: 'control' }));
-ipcMain.handle('device:zeroSensors', async () => {
-    if (!state.simulation) await serial.sendBinary('F', Buffer.alloc(0), { source: 'control' });
-    return { ok: true, message: 'Sensor zero command queued' };
-});
-ipcMain.handle('device:zeroMotor', async () => {
-    if (!state.simulation) await serial.sendBinary('G', Buffer.alloc(0), { source: 'control' });
-    state.angle = 0;
-    publish();
-    return state;
-});
+// Fan/angle/LED/zero go through main/control.js, which forwards them to the master when this app is a
+// remote client and otherwise runs them against the local hardware link.
+ipcMain.handle('device:setFanSpeed', (_event, value) => control.setFanSpeed(value));
+ipcMain.handle('device:setAngle', (_event, value) => control.setAngle(value));
+ipcMain.handle('device:setLeds', (_event, payload) => control.setLeds(payload));
+ipcMain.handle('device:zeroSensors', () => control.zeroSensors());
+ipcMain.handle('device:zeroMotor', () => control.zeroMotor());
 ipcMain.handle('device:sendCommand', async (_event, command, payload = []) => {
     const bytes = Buffer.from(payload);
     if (state.simulation) return { ok: true, command, simulation: true };
@@ -149,8 +146,11 @@ async function ensureLoggingForSweep(experiment) {
 }
 
 const NOT_CONNECTED = { ok: false, message: 'Controller not connected; sweep not started' };
+// Sweeps, experiment logging and calibration run on the machine that owns the hardware link.
+const REMOTE_REFUSAL = { ok: false, message: 'Sweeps and logging run on the master PC. Use the master to start them.' };
 
 ipcMain.handle('sweep:startAngle', async (_event, options = {}) => {
+    if (state.transport === 'remote') return REMOTE_REFUSAL;
     if (!state.connected) return NOT_CONNECTED;
     const experiment = experiments.getById(state.experimentId);
     const ensured = await ensureLoggingForSweep(experiment);
@@ -158,20 +158,21 @@ ipcMain.handle('sweep:startAngle', async (_event, options = {}) => {
     return sweeps.startAngleSweep(options);
 });
 ipcMain.handle('sweep:startFan', async (_event, options = {}) => {
+    if (state.transport === 'remote') return REMOTE_REFUSAL;
     if (!state.connected) return NOT_CONNECTED;
     const experiment = experiments.getById(state.experimentId);
     const ensured = await ensureLoggingForSweep(experiment);
     if (!ensured.ok) return ensured;
     return sweeps.startFanSweep(options);
 });
-ipcMain.handle('sweep:stop', () => sweeps.stopSweep());
+ipcMain.handle('sweep:stop', () => (state.transport === 'remote' ? network.remoteCommand('stopSweep', []) : sweeps.stopSweep()));
 ipcMain.handle('sweep:status', () => sweeps.status());
 
-ipcMain.handle('log:start', () => startLogWithDialog(experiments.getById(state.experimentId)));
+ipcMain.handle('log:start', () => (state.transport === 'remote' ? REMOTE_REFUSAL : startLogWithDialog(experiments.getById(state.experimentId))));
 ipcMain.handle('log:stop', () => logging.stopLog());
 ipcMain.handle('log:status', () => logging.status());
 ipcMain.handle('log:setFolder', (_event, folder) => logging.setLogsFolder(folder));
-ipcMain.handle('experiment:logPoint', () => sweeps.logPoint());
+ipcMain.handle('experiment:logPoint', () => (state.transport === 'remote' ? REMOTE_REFUSAL : sweeps.logPoint()));
 
 ipcMain.handle('calibration:setScaler', (_event, payload) => calibration.setScaler(payload));
 ipcMain.handle('calibration:getScalers', () => calibration.getScalers());
@@ -180,6 +181,16 @@ ipcMain.handle('calibration:getLut', () => calibration.getLut());
 ipcMain.handle('calibration:setLutFan', (_event, payload) => calibration.setLutFan(payload));
 ipcMain.handle('calibration:calibrateDisplay', () => calibration.calibrateDisplay());
 ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
+
+// Network settings are Admin-only and re-checked here, not just in the renderer.
+const adminOnly = (handler) => (...args) => (admin.isUnlocked() ? handler(...args) : { ok: false, message: 'Admin session is locked.' });
+ipcMain.handle('network:getSettings', adminOnly(() => ({ ok: true, ...network.getSettings() })));
+ipcMain.handle('network:saveEthernet', adminOnly((_event, payload) => network.saveEthernetSettings(payload || {})));
+ipcMain.handle('network:saveRelay', adminOnly((_event, payload) => network.saveRelaySettings(payload || {})));
+ipcMain.handle('network:regenerateCode', adminOnly(() => network.regenerateAccessCode()));
+ipcMain.handle('network:scan', adminOnly((_event, port) => network.scanNetwork(port)));
+ipcMain.handle('network:connectRemote', adminOnly((_event, payload) => network.connectRemote(payload || {})));
+ipcMain.handle('network:disconnectRemote', adminOnly(() => network.disconnectRemote()));
 
 ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.APPROVED_FIRMWARE_VERSION }));
 ipcMain.handle('admin:bootloaderPickHex', async () => {
@@ -221,6 +232,7 @@ app.whenReady().then(() => {
     } else {
         serial.startAutoConnect();
     }
+    network.init();
     sweeps.startSensorSampleTimer();
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -231,10 +243,11 @@ app.on('before-quit', (event) => {
     event.preventDefault();
     shutdownSafe = true;
     sweeps.stopSweep();
+    network.shutdown();
     Promise.race([
         serial.enterSafeState('system', { preempt: true }),
         new Promise((resolve) => setTimeout(resolve, 5000))
-    ]).catch(() => {}).finally(() => app.quit());
+    ]).catch(() => {}).then(() => serial.closeLink()).catch(() => {}).finally(() => app.quit());
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 

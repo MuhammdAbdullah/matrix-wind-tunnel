@@ -184,6 +184,7 @@ function switchAdminTab(tabName) {
     document.querySelectorAll('.admin-tabs .tab-button').forEach((button) => button.classList.toggle('active', button.dataset.adminTab === tabName));
     document.querySelectorAll('#adminView > .tab-content').forEach((pane) => pane.classList.toggle('active', pane.id === `${tabName}Tab`));
     if (tabName === 'calibrator') { refreshScalers(); refreshLut(); }
+    if (tabName === 'network') refreshNetworkSettings();
 }
 
 function applyExperiment(experiment) {
@@ -260,12 +261,16 @@ function render(value) {
     // the link if it stays silent). connecting: a port is open and awaiting the version reply.
     const degraded = value.connected && value.linkDegraded;
     const badgeTone = degraded || (value.connecting && !value.connected) ? 'badge-warning' : value.connected ? 'badge-success' : 'badge-error';
-    $('connectionBadge').textContent = degraded ? 'NOT RESPONDING' : value.connected ? (value.simulation ? 'SIMULATION MODE' : 'SYSTEM ONLINE') : value.connecting ? 'CONNECTING' : 'SYSTEM OFFLINE';
+    const remoteMode = value.transport === 'remote';
+    const remoteLabel = value.remoteAccess === 'control' ? 'REMOTE · CONTROL' : 'REMOTE · VIEW ONLY';
+    $('connectionBadge').textContent = degraded ? 'NOT RESPONDING' : value.connected ? (value.simulation ? 'SIMULATION MODE' : remoteMode ? remoteLabel : 'SYSTEM ONLINE') : value.connecting ? 'CONNECTING' : remoteMode ? 'REMOTE · OFFLINE' : 'SYSTEM OFFLINE';
     $('connectionBadge').className = `badge badge-sm gap-1 font-bold tracking-wider uppercase ${badgeTone}`;
 
     $('adminConnectionPill').textContent = degraded ? 'Not responding' : value.connected ? 'Connected' : value.connecting ? 'Connecting' : 'Searching';
     $('adminConnectionPill').className = `badge ${badgeTone}`;
-    $('adminTransport').textContent = value.connected ? `${value.simulation ? 'Simulation' : 'USB serial'} · ${value.port}` : 'USB serial · waiting';
+    $('adminTransport').textContent = value.connected ? `${value.simulation ? 'Simulation' : TRANSPORT_LABELS[value.transport] || 'USB serial'} · ${value.port}` : remoteMode ? 'Remote · reconnecting' : 'USB serial · waiting';
+    renderNetworkStatus(value);
+    applyRemoteRestrictions(value);
     $('adminRetries').textContent = value.diagnostics.retries;
     $('adminErrors').textContent = value.diagnostics.errors;
 
@@ -792,11 +797,167 @@ $('saveLut').addEventListener('click', () => runLutAction(async () => {
 $('refreshLut').addEventListener('click', () => refreshLut({ manual: true }));
 renderLut(Array(LUT_STEPS).fill(NaN));
 
+const TRANSPORT_LABELS = { usb: 'USB serial', ethernet: 'Ethernet (WebSocket)', remote: 'Remote (via master PC)' };
+
+// Remote clients never own the hardware: view-only ones cannot touch any control, and controllers
+// still cannot start sweeps/logs (those run on the master). The master enforces this independently.
+const REMOTE_CONTROL_IDS = ['fanSlider', 'angleSlider', 'fanValue', 'angleValue', 'zeroSensors', 'zeroMotor', 'ledAnimMode', 'ledAnimColor', 'ledAmbMode', 'ledAmbColor'];
+const REMOTE_MASTER_ONLY_IDS = ['startSweep', 'startLog', 'logPointButton'];
+
+function applyRemoteRestrictions(value) {
+    const remote = value.transport === 'remote';
+    const viewOnly = remote && value.remoteAccess !== 'control';
+    REMOTE_CONTROL_IDS.forEach((id) => { $(id).disabled = viewOnly; });
+    if (remote) REMOTE_MASTER_ONLY_IDS.forEach((id) => { $(id).disabled = true; });
+    $('stopSweep').title = remote ? 'Stops the sweep running on the master PC' : '';
+    if (remote) $('stopSweep').disabled = viewOnly;
+}
+
+function setPill(id, text, tone) {
+    $(id).textContent = text;
+    $(id).className = `badge badge-${tone}`;
+}
+
+function renderNetworkStatus(value) {
+    const net = value.network || {};
+    const relay = net.relay || {};
+    const remote = net.remote || {};
+    const modeText = { off: 'Off', view: 'View only', control: 'View and control' }[relay.mode] || 'Off';
+    $('adminRemoteAccess').textContent = relay.running ? `${modeText} · port ${relay.port} · ${relay.clients.length} device(s)` : modeText === 'Off' ? 'Off' : `${modeText} · not listening`;
+    if (value.transport === 'remote') {
+        const via = remote.hardwareTransport ? ` · tunnel on ${remote.hardwareTransport === 'ethernet' ? 'Ethernet' : 'USB'}` : '';
+        setPill('netLinkPill', `Remote${via}`, value.connected ? 'success' : 'warning');
+    } else {
+        setPill('netLinkPill', value.connected ? (TRANSPORT_LABELS[value.transport] || 'Connected') : 'Offline', value.connected ? 'success' : 'neutral');
+    }
+    setPill('relayPill', relay.running ? modeText : relay.mode && relay.mode !== 'off' ? 'Not listening' : 'Off', relay.running ? 'success' : relay.mode && relay.mode !== 'off' ? 'warning' : 'neutral');
+    setPill('remotePill', value.transport === 'remote' ? (value.connected ? (value.remoteAccess === 'control' ? 'Connected · control' : 'Connected · view only') : 'Reconnecting') : 'Not connected', value.transport === 'remote' && value.connected ? 'success' : value.transport === 'remote' ? 'warning' : 'neutral');
+    // Names come from other devices, so they are only ever inserted as text.
+    const list = $('relayClients');
+    list.replaceChildren(...(relay.clients || []).map((client) => {
+        const row = document.createElement('div');
+        row.textContent = `${client.name} · ${client.address} · ${client.commands} command(s)${client.lastCommandAt ? ` · last ${new Date(client.lastCommandAt).toLocaleTimeString()}` : ''}`;
+        return row;
+    }));
+    if (!(relay.clients || []).length) list.textContent = 'No devices connected.';
+
+    const yielded = net.ethernetYield;
+    $('ethYield').classList.toggle('hidden', !yielded);
+    if (yielded) $('ethYield').textContent = `Ethernet released: ${yielded.name} (${yielded.host}) has the controller over USB. Connect to it as a remote device below.`;
+    const found = net.discovered || [];
+    const foundList = $('discoveredMasters');
+    if (!found.length) foundList.textContent = 'None found. A master appears here when another PC is connected to the tunnel with remote access on.';
+    else {
+        foundList.replaceChildren(...found.map((master) => {
+            const row = document.createElement('div');
+            const label = `${master.name} · ${master.host}:${master.port} · tunnel on ${master.hardware === 'usb' ? 'USB' : 'Ethernet'} · ${{ off: 'remote access off', view: 'view only', control: 'view and control' }[master.mode]}`;
+            if (master.mode !== 'off') {
+                const use = document.createElement('button');
+                use.className = 'btn btn-xs btn-outline mr-2';
+                use.textContent = 'Use';
+                use.addEventListener('click', () => { $('remoteHost').value = master.host; $('remotePort').value = master.port; $('remoteCode').focus(); });
+                row.append(use);
+            }
+            row.append(document.createTextNode(label));
+            return row;
+        }));
+    }
+}
+
+async function refreshNetworkSettings() {
+    const result = await window.windTunnel.getNetworkSettings();
+    if (!result.ok) { log(result.message, 'error'); return; }
+    // Do not clobber a field the operator is editing.
+    const setIfIdle = (id, value) => { if (document.activeElement !== $(id)) $(id).value = value; };
+    $('ethEnabled').checked = result.ethernet.enabled;
+    setIfIdle('ethHost', result.ethernet.host);
+    setIfIdle('ethPort', result.ethernet.port);
+    $('relayMode').value = result.relay.mode;
+    setIfIdle('relayPort', result.relay.port);
+    $('relayCode').textContent = result.relay.accessCode;
+    setIfIdle('remoteHost', result.remote.host);
+    setIfIdle('remotePort', result.remote.port);
+    $('relayUrls').textContent = result.addresses.length ? result.addresses.map((address) => `http://${address}:${result.relay.port}`).join('   ') : 'no network adapter found';
+    if (result.relayLastError) $('relayAck').textContent = result.relayLastError;
+}
+
+function syncDhcpFields() {
+    $('networkIp').disabled = $('networkDhcp').checked;
+}
+$('networkDhcp').addEventListener('change', syncDhcpFields);
+syncDhcpFields();
+
 $('saveNetwork').addEventListener('click', async () => {
-    const [ip0, ip1, ip2, ip3] = $('networkIp').value.split('.').map((part) => Number(part) || 0);
-    const result = await window.windTunnel.setNetwork(ip0, ip1, ip2, ip3, Number($('networkPort').value));
+    const parts = $('networkIp').value.trim().split('.');
+    const octets = parts.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : NaN));
+    const dhcp = $('networkDhcp').checked;
+    if (!dhcp && (octets.length !== 4 || octets.some((octet) => !(octet >= 0 && octet <= 255)))) {
+        $('networkAck').textContent = 'Enter the static IP as four numbers from 0 to 255, for example 192.168.1.150.';
+        return;
+    }
+    const [ip0, ip1, ip2, ip3] = octets.length === 4 ? octets : [192, 168, 1, 150];
+    const result = await window.windTunnel.setNetwork(ip0, ip1, ip2, ip3, Number($('networkPort').value), dhcp);
     $('networkAck').textContent = result.message;
+    if (result.ok && !dhcp) { $('ethHost').value = `${ip0}.${ip1}.${ip2}.${ip3}`; $('ethPort').value = $('networkPort').value; }
     log(result.message, result.ok ? 'info' : 'error');
+});
+
+$('saveEthernet').addEventListener('click', async () => {
+    const result = await window.windTunnel.saveEthernetSettings({ enabled: $('ethEnabled').checked, host: $('ethHost').value, port: Number($('ethPort').value) });
+    $('ethAck').textContent = result.message;
+    log(result.message, result.ok ? 'info' : 'error');
+});
+
+$('scanNetwork').addEventListener('click', async () => {
+    const button = $('scanNetwork');
+    button.disabled = true;
+    $('scanResults').textContent = 'Scanning this PC\'s network for controllers...';
+    const result = await window.windTunnel.scanNetwork(Number($('ethPort').value));
+    button.disabled = false;
+    if (!result.ok) { $('scanResults').textContent = result.message; return; }
+    if (!result.devices.length) {
+        $('scanResults').textContent = `No controller answered on port ${$('ethPort').value} (${result.subnets.join(', ')}). The controller serves one client at a time, so one already connected will not answer.`;
+        return;
+    }
+    $('scanResults').replaceChildren(...result.devices.map((device) => {
+        const row = document.createElement('div');
+        const use = document.createElement('button');
+        use.className = 'btn btn-xs btn-outline mr-2';
+        use.textContent = 'Use';
+        use.addEventListener('click', () => { $('ethHost').value = device.host; $('ethPort').value = device.port; $('ethEnabled').checked = true; });
+        row.append(use, document.createTextNode(`${device.host}:${device.port} · API v${device.apiVersion}`));
+        return row;
+    }));
+});
+
+$('saveRelay').addEventListener('click', async () => {
+    const result = await window.windTunnel.saveRelaySettings({ mode: $('relayMode').value, port: Number($('relayPort').value) });
+    $('relayAck').textContent = result.message;
+    log(result.message, result.ok ? 'info' : 'error');
+    refreshNetworkSettings();
+});
+
+$('regenCode').addEventListener('click', async () => {
+    if (!window.confirm('Generate a new access code? Every connected remote device will be disconnected.')) return;
+    const result = await window.windTunnel.regenerateAccessCode();
+    if (result.ok) $('relayCode').textContent = result.accessCode;
+    log('Remote access code regenerated; connected devices were disconnected');
+});
+
+$('remoteConnect').addEventListener('click', async () => {
+    $('remoteAck').textContent = 'Connecting...';
+    $('remoteConnect').disabled = true;
+    const result = await window.windTunnel.connectRemote($('remoteHost').value, Number($('remotePort').value), $('remoteCode').value);
+    $('remoteConnect').disabled = false;
+    $('remoteAck').textContent = result.message;
+    if (result.ok) $('remoteCode').value = '';
+    log(result.message, result.ok ? 'info' : 'error');
+});
+
+$('remoteDisconnect').addEventListener('click', async () => {
+    await window.windTunnel.disconnectRemote();
+    $('remoteAck').textContent = 'Disconnected. This app is searching for a local controller again.';
+    log('Disconnected from the master PC');
 });
 
 // Bootloader connect/hex-load/erase-program-verify flow, ported from Process Control V2's

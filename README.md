@@ -27,7 +27,7 @@ Windows Electron desktop application for the Matrix Wind Tunnel. It combines the
 | **Experiments** | Eight experiments (pressure-to-velocity, pressure-tapped cylinder/aerofoil, lift, drag, stem racing, sensors vs time, custom X/Y), each with its own traces, axes and CSV columns. A live chart and an experiment-history chart are kept separate. |
 | **Sweeps** | Timed angle sweeps and fan-speed sweeps that move the actuator, wait for it to settle, read the sensors, log a point and advance. |
 | **Logging** | CSV files (`WindTunnelLog_<timestamp>.csv` style) in a configurable folder; the save location is asked once per experiment. |
-| **Admin** | Password-gated area (10-minute session) with diagnostics (raw TX/RX, retry/error counters, activity log), sensor scalers, 10-point velocity LUT (guided 10 %-step pressure capture converted to air speed, saved with one Save Table button), display calibration, network IP/port, HID bootloader firmware update, app-update status and an audit trail. |
+| **Admin** | Password-gated area (30-minute session) with diagnostics (raw TX/RX, retry/error counters, activity log), sensor scalers (with a Zero Sensor button and a "type the sensor reading" helper that fills the scale factor), 10-point velocity LUT (guided 10 %-step pressure capture converted to air speed, plotted as Velocity vs Fan Speed, saved with one Save Table button), network IP/port, HID bootloader firmware update, change-password form, app-update status and an audit trail. |
 | **Network** | Admin > Network: controller IP / DHCP / port, Ethernet connection with network scan, **remote access** (other PCs, tablets and phones can watch or also control through the master PC, set to *off*, *view only* or *view and control*), discovery of masters on the LAN, and connecting this app to another PC as a remote client. See [Ethernet and remote access](#ethernet-and-remote-access). |
 | **Simulation** | `--simulate` replaces the hardware with synthetic sensor data for development without a tunnel. |
 
@@ -44,7 +44,7 @@ npm run build-win     # electron-builder Windows NSIS installer -> dist/
 npm run rebuild-hid   # rebuild the native node-hid module against Electron's ABI
 ```
 
-The production build shows "Searching for controller…" and connects as soon as the approved device appears. Simulation is opt-in only (`npm run simulate`, or `WIND_TUNNEL_SIMULATION=1`). There is no automated test suite — verify changes with `npm run simulate` and/or against real hardware. DevTools: `Ctrl+Shift+I`.
+The production build shows "Searching for controller…" and connects as soon as the controller appears. Simulation is opt-in only (`npm run simulate`, or `WIND_TUNNEL_SIMULATION=1`). There is no automated test suite — verify changes with `npm run simulate` and/or against real hardware. DevTools: `Ctrl+Shift+I`.
 
 ## How it works
 
@@ -63,7 +63,7 @@ The production build shows "Searching for controller…" and connects as soon as
 │  main/sweeps.js       sensor-sample timer, angle/fan sweeps, Log Point      │
 │  main/logging.js      CSV output                                            │
 │  main/calibration.js  scalers / LUT / display / network (Admin-gated)       │
-│  main/admin.js        scrypt password hash, 10-minute session               │
+│  main/admin.js        scrypt password hash, 30-minute session               │
 │  main/bootloader.js   HID bootloader protocol  ─ main/firmware.js (gated)   │
 │  main/ethernet.js     WebSocket link to the controller (Ethernet)           │
 │  main/network.js      relay for other devices, discovery, remote client     │
@@ -81,6 +81,8 @@ The production build shows "Searching for controller…" and connects as soon as
 
 **Command queue.** `sendBinary()` chains every command onto one promise so only one command is ever in flight; each is retried on timeout, recorded in the TX/RX diagnostics and tagged with its source (`control`, `calibrator`, `system`) in the audit log.
 
+**Touchscreen changes.** With V2.0.7 firmware that reports touchscreen changes, a fan speed, angle or LED change made on the controller's own display arrives as an unsolicited message (`{"fanspeed":n}`, `{"angle":n}`, `{"animmode":…}` / `{"ambmode":…}` with colours). The app mirrors it into the state object so the sliders, numbers and LED pickers follow the controller. These messages never resolve a pending command. This needs the touchscreen-JSON firmware build, which has not yet been run on hardware.
+
 **Sensor polling.** A 1 s timer reads sensors (`C`) and publishes. While a sweep runs, the sweep tick does the read itself so no duplicate round-trips occur.
 
 **Sweeps.** `sweep:startAngle` / `sweep:startFan` first make sure a CSV is open (asking for a save location once per experiment; repeated sweeps of the same experiment append as blank-line-separated blocks). Each tick moves to the current value, waits a settle delay (scaled by how far the actuator travelled), reads sensors, logs a row, then steps toward `end`. A sweep stops at `end` and resets to `start` — it never reverses or loops — and stops on unexpected disconnect.
@@ -93,11 +95,11 @@ The production build shows "Searching for controller…" and connects as soon as
 
 Values are the controller's raw floats; drag shape and tapping channel are metadata only and never enter a calculation.
 
-**Admin and safety.** Calibration writes and all firmware actions are checked in the main process (`admin.isUnlocked()`; calibration additionally requires no running sweep), not just in the UI. Calibration writes read the value back from the controller and only report `acknowledged: true` when the hardware confirms it.
+**Admin and safety.** Calibration writes and all firmware actions are checked in the main process (`admin.isUnlocked()`; calibration additionally requires no running sweep), not just in the UI. The Admin password is stored as a salted scrypt hash, wrapped with the operating system keystore (Electron `safeStorage`, Windows DPAPI) when available. The password can be changed in Admin > Settings (the current password is always re-checked, minimum 8 characters), and first-time setup is refused if a password already exists. If the stored file cannot be read or decrypted the app reports that instead of treating Admin as "not configured". When the 30-minute session lapses while an Admin view is open, calibration actions ask for the password again. Calibration writes read the value back from the controller and only report `acknowledged: true` when the hardware confirms it.
 
-**Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
+**Safe state on connect and quit.** Whenever the app (re)connects and has verified the API version, and again before the app quits, it sends fan speed `0` and zero-motor to the controller so nothing left running from an earlier session or experiment continues. Both commands go through the normal command queue, so they use the encoding of the verified API version (JSON for V2.0.6 and V2.0.7). On quit, running sweeps are stopped first and the exit waits at most 5 s for the controller. Failures are logged and counted but never block startup or exit; in simulation only local state is reset.
 
-**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**, so the operator enters VID/PID in Admin → Communication Settings. VID/PID are entered in hexadecimal, with or without a `0x` prefix (`12BF`, `0xF010`); if they are missing, the error lists the USB HID PIDs currently present under that VID. **Trigger Bootloader** stops the fan and sends `{"BL":1}` over the application serial link (the same command Process Control V2 uses; no reply is expected), after which Connect waits for the HID bootloader to enumerate. That command is **not yet verified on Wind Tunnel V2.0.6 hardware**; if the controller ignores it, enter bootloader mode from its touchscreen "Bootloader" menu instead. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. A file that is not an approved Wind Tunnel firmware image is rejected before it is opened, and a rejected pick never replaces a hex file that is already loaded. See `CLAUDE.md` for the full details and known caveats.
+**Firmware update.** Done over USB HID against the controller's bootloader (64-byte reports, SOH/EOT/DLE framing, CRC-16, Intel-HEX): connect → read info → erase → program (10 records per exchange) → CRC verify → run application. The bootloader's USB PID is **not yet hardware-confirmed**: the PID field is pre-filled with `0xA1` (the default in Process Control V2, an unverified guess) and the operator can change it, together with the VID, in Admin → Communication Settings. If the entered PID does not appear but exactly one other HID product ID exists under the VID, Connect opens that one and writes its real PID back into the field. VID/PID are entered in hexadecimal, with or without a `0x` prefix (`12BF`, `0xF010`); if they are missing, the error lists the USB HID PIDs currently present under that VID. **Trigger Bootloader** stops the fan and sends `{"BL":1}` over the application serial link (the same command Process Control V2 uses; no reply is expected), after which Connect waits for the HID bootloader to enumerate. The button has no confirm popup, is enabled only while the application link is up, and stays grey after a trigger until the link has dropped and come back (with a 20 s fallback if the controller ignores the command). The V2.0.7 firmware source handles this command (it shows "Bootloader Mode" and resets; V2.0.2–V2.0.5 have no such handler), but it has **not yet been tried on real hardware**; if the controller ignores it, enter bootloader mode from its touchscreen "Bootloader" menu instead. Hex files are chosen through a main-process file dialog (`bootloaderPickHex`) because Electron 32+ no longer exposes `File.path`. There is no approved image (the firmware is in development; V2.0.7 is the latest). The only rule is the file name: it must start with `WindTunnel` (case-insensitive) and may continue with anything (`WindTunnel V2.0.7.hex`, `WindTunnel_test.hex`); any other file is rejected before it is opened, and a rejected pick never replaces a hex file that is already loaded. See `CLAUDE.md` for the full details and known caveats.
 
 ## Ethernet and remote access
 
@@ -116,7 +118,7 @@ The V2.0.7 controller serves its JSON API over a **WebSocket** on port `1245` (o
 
 1. *Controller Network Settings*: DHCP on/off, static IP and port, then **Send To Controller** (needs a connected controller, Admin unlocked and no sweep running). The controller sends no reply to this command, so it is reported as *sent*, not acknowledged; the IP cannot be read back.
 2. *Connect To Controller Over Ethernet*: tick the option, enter the controller's address and port (default `1245`) or use **Scan Network** (finds controllers on this PC's local /24 subnets) and press **Save**. Use a switch/router with DHCP, or give the controller a static IP in the PC's subnet first.
-3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated fresh on every app launch (never saved to disk, so it must be copied again after a restart); **New code** replaces it immediately and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown. A **Give other PCs** line shows the address, port and code together (`192.168.1.20:8090 ABCD-EFGH`) with a **Copy** button. Connected devices are listed with their command counts.
+3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated fresh on every app launch (never saved to disk, so it must be copied again after a restart); **New code** replaces it immediately and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown; addresses of real network adapters are listed first and virtual ones (VirtualBox/VMware/Hyper-V/WSL/Docker, Windows hotspot, link-local) last, so the first address is the one other PCs on the LAN should use. A **Give other PCs** line shows the address, port and code together (`192.168.1.20:8090 ABCD-EFGH`) with a **Copy** button. Connected devices are listed with their command counts.
 4. *Connect To A Master PC*: on another PC, pick a master from **Masters found on this network** (or type its address), enter the access code and press **Connect**. Pasting the master's copied `address:port CODE` line into **Master address** fills the address, port and code in one go. This app then mirrors the master and stops using its own USB/Ethernet link; **Disconnect** returns to local scanning. The code is not saved, so it is asked for again each session.
 
 **Experiments on a remote PC.** A PC connected to a master follows the master's experiment automatically: it switches to the experiment the master selected, shows the master's settings (tapping channel, aerofoil angle, increments, drag shape, chart type, custom axes and the sweep start/end/step/delay) and plots the master's sweep and each logged point as they happen. If the remote PC connects mid-sweep, it plots from that moment. Experiment setup, Start Sweep, Log and Log Point are locked on the remote PC (the master refuses them too); only Stop Sweep is available, and only in *view and control* mode.
@@ -212,7 +214,6 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %…100 %). |
 | `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %…100 %, each 0–100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
 | `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0–100) for the pressure capture. Admin-gated except for 0 % (stop). |
-| `calibrateDisplay()` | `calibration:calibrateDisplay` | Start touchscreen calibration on the controller. The firmware sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
 | `setNetwork(ip0, ip1, ip2, ip3, port, dhcp)` | `calibration:setNetwork` | Store IP, port and the DHCP flag on the controller (V2.0.7). The controller sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
 
 **Admin and firmware**
@@ -221,17 +222,18 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 |---|---|---|
 | `adminStatus()` | `admin:status` | `{ configured, unlocked, secureStorage }`. |
 | `setupAdmin(password)` | `admin:setup` | First-time password (min. 8 characters); unlocks. |
-| `verifyAdmin(password)` | `admin:verify` | Unlock for 10 minutes → `{ ok }` or `{ ok: false, needsSetup: true }`. |
+| `verifyAdmin(password)` | `admin:verify` | Unlock for 30 minutes → `{ ok }` or `{ ok: false, needsSetup: true }`. |
+| `changeAdminPassword(currentPassword, newPassword)` | `admin:changePassword` | Admin only. Re-verifies the current password, then stores the new one (min. 8 characters, must differ) with a fresh salt → `{ ok }`, or `{ ok: false, message }` / `{ ok: false, unreadable: true }`. |
 | `lockAdmin()` | `admin:lock` | End the session. |
 | `getAuditLog()` | `admin:getAuditLog` | Last 50 audit entries. |
 | `requestElevation()` | `admin:requestElevation` | Stub — always declines (UAC elevation not wired up yet). |
-| `getFirmwareInfo()` | `admin:firmwareInfo` | `{ version }` of the approved firmware. |
+| `getFirmwareInfo()` | `admin:firmwareInfo` | `{ version }` of the latest firmware the app targets (`2.0.7`). |
 | `bootloaderPickHex()` | `admin:bootloaderPickHex` | Native file dialog; returns the chosen path or `null`. |
 | `bootloaderTrigger()` | `admin:bootloaderTrigger` | Stop the fan and send `{"BL":1}` to the connected controller. Refused in simulation, when disconnected and during a sweep. |
 | `bootloaderCheckDevice(vid, pid)` | `admin:bootloaderCheckDevice` | `{ ok, present }`. VID/PID are hex strings (`0x` optional). |
 | `bootloaderConnect(vid, pid)` | `admin:bootloaderConnect` | Open the bootloader HID session. |
 | `bootloaderDisconnect()` | `admin:bootloaderDisconnect` | Close it. |
-| `bootloaderLoadHex(path)` | `admin:bootloaderLoadHex` | Parse an Intel-HEX file; `{ ok: false, reason: 'rejected' }` if it is not an approved Wind Tunnel firmware image. |
+| `bootloaderLoadHex(path)` | `admin:bootloaderLoadHex` | Parse an Intel-HEX file; `{ ok: false, reason: 'rejected' }` if the file name does not start with `WindTunnel`. |
 | `bootloaderReadInfo()` | `admin:bootloaderReadInfo` | Bootloader version. |
 | `bootloaderErase()` | `admin:bootloaderErase` | Erase application flash. |
 | `bootloaderProgram()` | `admin:bootloaderProgram` | Program the loaded hex. |
@@ -286,14 +288,14 @@ USB serial, `115200` baud. Request frame: `':' + command byte + payload + ';' + 
 | `I` | – | Read scalers | 3 × float32 |
 | `J` | index, float32 | Set LUT entry | ack |
 | `K` | – | Read LUT | 10 × float32 |
-| `L` | – | Calibrate display | none (sent only) |
+| `L` | – | Calibrate display (legacy binary API only; not used by this app, the capacitive touch display needs no calibration) | – |
 | `M` | 4 IP bytes, uint16 LE port, DHCP flag byte | Store network address (V2.0.7 JSON: `ip0`–`ip3`, `port`, `dhcp`) | none |
 
 The app sends the JSON form of these commands (the V2.0.7 firmware no longer parses the binary frames), as one text message per request when connected over Ethernet. The command set is defined by the firmware and must not be extended from this app.
 
 ## Files written by the app
 
-Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password) and `wind-tunnel-config.json` (Logs folder, Ethernet target, remote-access mode/port; the access code is deliberately not stored). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
+Under Electron's `userData` folder: `wind-tunnel-admin.json` (scrypt hash + salt, never the plaintext password; wrapped as `{ v: 2, enc }` with `safeStorage` when available, so older builds cannot read a file written by this one) and `wind-tunnel-config.json` (Logs folder, Ethernet target, remote-access mode/port; the access code is deliberately not stored). CSV logs default to `Documents\Wind Tunnel\Logs`. Theme preference lives in `localStorage['wind-tunnel-theme']`.
 
 ## Safety and Git boundary
 
@@ -302,6 +304,20 @@ Do not modify or reflash firmware during normal UI development. Firmware flashin
 This directory is an independent Git repository. Commit and push from here only; the sibling `Firmware`, `Matrix Wind Tunnel 2.2` and `Process Control V2` directories are read-only references. See `CLAUDE.md` for the full module layout, dependency graph and protocol/calibration/bootloader notes.
 
 ## Release notes
+
+### Unreleased
+
+- Change: there is no longer an "approved" firmware image. V2.0.7 is the latest firmware and `getFirmwareInfo()` reports `2.0.7`. The hex-file rule is only that the name starts with `WindTunnel` (case-insensitive, anything after it allowed); the rejection message now reads "not a Wind Tunnel firmware image". `main/firmware.js` no longer has `APPROVED_FIRMWARE_VERSION` / `APPROVED_IMAGE_NAME` (now `LATEST_FIRMWARE_VERSION`).
+- Docs: Trigger Bootloader (`{"BL":1}`) confirmed against the V2.0.7 firmware source.
+- Change: the Admin session now lasts **30 minutes** (was 10). If it lapses while an Admin view is open, calibration actions ask for the password again.
+- New: **Change Admin Password** (Admin > Settings, `changeAdminPassword`). The Admin file is now encrypted with the OS keystore (`safeStorage`); first-time setup is refused when a password already exists; an unreadable file is reported instead of being treated as "not configured".
+- New: touchscreen changes reported by the V2.0.7 controller (fan speed, angle, LED settings) are mirrored into the app. Needs the touchscreen-JSON firmware build; not yet run on hardware.
+- New: Admin > Calibrator shows a **Velocity vs Fan Speed** chart of the lookup table; Sensor Scalers gained a **Zero Sensor** button and a sensor-reading helper (lift/drag give 4905 / reading, pressure gives 1000 / reading, filled into the scale factor box; nothing is sent until Save). Starting or stopping the LUT fan capture no longer needs an unlocked session.
+- Change: **Calibrate Display** and `calibrateDisplay()` are removed (the capacitive touchscreen needs no calibration); command `L` is legacy binary API only.
+- Change: Admin > Bootloader PID field is pre-filled with `0xA1`; Connect adopts the only other HID product ID under the VID if the entered PID is absent; the loaded hex shows only its file name; Trigger Bootloader has no confirm popup and stays grey until the controller has dropped and reconnected.
+- Change: remote-access address list puts real network adapters before virtual ones (VirtualBox, VMware, Hyper-V, WSL, Docker, hotspot, link-local).
+- Change: the "Logging" pill is no longer shown for sweep experiments while idle (the "Sweeping" pill covers recording).
+- API: added `changeAdminPassword`; removed `calibrateDisplay`.
 
 ### v0.2.2
 
@@ -324,7 +340,7 @@ This directory is an independent Git repository. Commit and push from here only;
 - New: Admin > Network tab. The network card moved there from the Calibrator tab and gained the DHCP option and the V2.0.7 default port `1245`. The IP/port/DHCP command is reported as *sent* rather than *acknowledged* because the controller does not reply.
 - Change: the app now depends on `ws`; fan/angle/LED/zero commands live in `main/control.js`.
 - API: added `getNetworkSettings`, `saveEthernetSettings`, `saveRelaySettings`, `regenerateAccessCode`, `scanNetwork`, `connectRemote`, `disconnectRemote`; `setNetwork` takes a `dhcp` argument. The state object gained `transport`, `remoteAccess` and `network`.
-- New: Admin > Bootloader "Trigger Bootloader" is enabled and sends `{"BL":1}` to the connected controller (same command Process Control V2 uses) after stopping the fan, then Connect opens the USB HID bootloader. Unverified on Wind Tunnel V2.0.6 hardware; the touchscreen "Bootloader" entry remains the fallback.
+- New: Admin > Bootloader "Trigger Bootloader" is enabled and sends `{"BL":1}` to the connected controller (same command Process Control V2 uses) after stopping the fan, then Connect opens the USB HID bootloader. Handled by the V2.0.7 firmware source but untried on hardware; the touchscreen "Bootloader" entry remains the fallback.
 - Fix: bootloader VID/PID fields accept hexadecimal with or without `0x` (`F010`, `0x12BF`); previously un-prefixed hex was rejected. When an ID is missing, the message lists the USB HID PIDs currently present under that VID.
 - Fix: bootloader device detection (`HID.devices()`) now works; the `node-hid` module was being destructured so only the device class was available.
 - Change: firmware files that are not approved Wind Tunnel images are rejected at load time (before the file is opened), and a rejected pick no longer updates the displayed hex path. This replaces the earlier warning-only check.

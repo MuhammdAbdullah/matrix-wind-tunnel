@@ -184,7 +184,6 @@ ipcMain.handle('calibration:getScalers', () => calibration.getScalers());
 ipcMain.handle('calibration:setLutTable', (_event, payload) => calibration.setLutTable(payload));
 ipcMain.handle('calibration:getLut', () => calibration.getLut());
 ipcMain.handle('calibration:setLutFan', (_event, payload) => calibration.setLutFan(payload));
-ipcMain.handle('calibration:calibrateDisplay', () => calibration.calibrateDisplay());
 ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
 
 // Network settings are Admin-only and re-checked here, not just in the renderer.
@@ -197,7 +196,7 @@ ipcMain.handle('network:scan', adminOnly((_event, port) => network.scanNetwork(p
 ipcMain.handle('network:connectRemote', adminOnly((_event, payload) => network.connectRemote(payload || {})));
 ipcMain.handle('network:disconnectRemote', adminOnly(() => network.disconnectRemote()));
 
-ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.APPROVED_FIRMWARE_VERSION }));
+ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.LATEST_FIRMWARE_VERSION }));
 ipcMain.handle('admin:bootloaderPickHex', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Select firmware hex file', filters: [{ name: 'Hex Files', extensions: ['hex'] }], properties: ['openFile'] });
     return result.canceled || !result.filePaths.length ? null : result.filePaths[0];
@@ -215,7 +214,8 @@ ipcMain.handle('admin:bootloaderJumpToApp', () => firmware.jumpToApp());
 ipcMain.handle('admin:status', () => admin.status());
 ipcMain.handle('admin:verify', (_event, password) => admin.verify(password));
 ipcMain.handle('admin:setup', (_event, password) => admin.setup(password));
-ipcMain.handle('admin:lock', () => { admin.lock(); publish(); return { ok: true }; });
+ipcMain.handle('admin:changePassword', adminOnly((_event, currentPassword, newPassword) => admin.changePassword(currentPassword, newPassword)));
+ipcMain.handle('admin:lock',() => { admin.lock(); publish(); return { ok: true }; });
 ipcMain.handle('admin:getAuditLog', () => audit.slice(-50));
 ipcMain.handle('admin:requestElevation', async () => {
     await dialog.showMessageBox({ type: 'info', title: 'Windows administrator approval', message: 'Firmware operations must be performed by an elevated helper and are disabled in this build.' });

@@ -5,10 +5,11 @@ const { CMD } = require('./protocol');
 const { state, publish, pushEvent } = require('./state');
 const path = require('path');
 
-// Single place to bump when a new approved firmware image ships (files are named WindTunnel V<x.y.z>.hex).
-const APPROVED_FIRMWARE_VERSION = '2.0.6';
-const APPROVED_IMAGE_NAME = `WindTunnel V${APPROVED_FIRMWARE_VERSION}.hex`;
-// Any firmware file whose name does not start with this is rejected at load time.
+// There is no "approved" image: the firmware is still in development and V2.0.7 is the latest. This is
+// the version the app is written against, bumped when a newer firmware ships.
+const LATEST_FIRMWARE_VERSION = '2.0.7';
+// The only naming rule: a firmware file must start with this (case-insensitive); anything after it is
+// accepted ("WindTunnel V2.0.7.hex", "WindTunnel_test.hex", ...). Others are rejected at load time.
 const HEX_NAME_PREFIX = 'WindTunnel';
 
 function progress(stage, level, message) {
@@ -111,10 +112,12 @@ const connect = guarded('connect', async (vid, pid) => {
         return { ok: false, stage: 'connect', reason: 'missing-usb-id', message };
     }
     progress('connect', 'info', 'Searching for the Wind Tunnel bootloader device...');
-    await bootloader.connect(ids.vendorId, ids.productId);
-    const message = 'Connected to the bootloader device.';
+    const used = await bootloader.connect(ids.vendorId, ids.productId);
+    const message = used.productId === ids.productId
+        ? 'Connected to the bootloader device.'
+        : `Connected to the bootloader device (PID ${hexId(used.productId)}, not the ${hexId(ids.productId)} that was entered).`;
     progress('connect', 'info', message);
-    return { ok: true, stage: 'connect', message };
+    return { ok: true, stage: 'connect', message, vendorId: hexId(used.vendorId), productId: hexId(used.productId) };
 });
 
 async function disconnect() {
@@ -129,7 +132,7 @@ const loadHex = guarded('load-hex', async (hexPath) => {
     // the file is even opened and a rejected file never replaces a previously loaded one. The message
     // is deliberately generic: the naming rule is a safety control and must not be disclosed to the operator.
     if (!path.basename(hexPath).toLowerCase().startsWith(HEX_NAME_PREFIX.toLowerCase())) {
-        const message = 'This file was rejected: it is not an approved Wind Tunnel firmware image.';
+        const message = 'This file was rejected: it is not a Wind Tunnel firmware image.';
         progress('load-hex', 'error', message);
         return { ok: false, stage: 'load-hex', reason: 'rejected', message };
     }
@@ -184,8 +187,7 @@ const jumpToApp = guarded('run', async () => {
 });
 
 module.exports = {
-    APPROVED_FIRMWARE_VERSION,
-    APPROVED_IMAGE_NAME,
+    LATEST_FIRMWARE_VERSION,
     triggerBootloader,
     checkDevice,
     connect,

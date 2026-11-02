@@ -83,6 +83,7 @@ html, body { height: 100%; overflow: hidden; }
 .calibration-grid { grid-template-columns: 1fr 1fr; }
 .admin-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
+.panel-actions { display: flex; align-items: center; gap: 8px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 
 /* Experiment Setup's "Sweeping (n)" pill: flashes while a sweep is running so the
@@ -101,29 +102,73 @@ html, body { height: 100%; overflow: hidden; }
 .panel label, .card label { display: block; margin: 10px 0; font-size: 12px; }
 .card output { float: right; font-size: 13px; opacity: 1; }
 .card input[type=range] { display: block; width: 100%; margin-top: 10px; }
-.value-edit { float: right; font-size: 13px; opacity: 1; display: inline-flex; align-items: center; gap: 2px; }
-.value-input {
-    width: 3.5em;
-    text-align: right;
+/* Editable number field: an inset "input well" (value + unit + stacked stepper chevrons) so it
+   reads as typeable at a glance, and the whole well lights up on hover/focus. */
+.value-edit { float: right; font-size: 13px; opacity: 1; display: inline-flex; align-items: center; }
+.value-field {
+    display: inline-flex;
+    align-items: stretch;
     background: oklch(var(--b1));
-    border: 1px solid oklch(var(--b3));
-    border-radius: 4px;
+    border: 1px solid oklch(var(--bc) / 0.28);
+    border-radius: 6px;
+    box-shadow: inset 0 1px 2px oklch(var(--bc) / 0.18);
+    cursor: text;
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.value-field:hover { border-color: oklch(var(--p)); }
+.value-field:focus-within { border-color: oklch(var(--p)); box-shadow: 0 0 0 2px oklch(var(--p) / 0.25); }
+.value-input {
+    width: 3em;
+    text-align: right;
+    background: transparent;
+    border: 0;
     color: inherit;
     font: inherit;
-    padding: 2px 4px;
+    font-variant-numeric: tabular-nums;
+    padding: 3px 0 3px 8px;
     cursor: text;
     -moz-appearance: textfield;
 }
+.value-input:focus { outline: none; }
 .value-input::-webkit-inner-spin-button,
 .value-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-.value-input:hover { border-color: oklch(var(--p)); }
-.value-input:focus { outline: none; border-color: oklch(var(--p)); box-shadow: 0 0 0 2px oklch(var(--p) / 0.25); }
+.value-unit { display: flex; align-items: center; padding: 0 6px 0 2px; opacity: 0.6; user-select: none; }
+.value-steppers { display: flex; flex-direction: column; border-left: 1px solid oklch(var(--bc) / 0.18); }
+.step-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    padding: 0;
+    border: 0;
+    background: oklch(var(--bc) / 0.06);
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+}
+.step-btn + .step-btn { border-top: 1px solid oklch(var(--bc) / 0.18); }
+.step-btn svg { width: 8px; height: 5px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.step-btn:hover { background: oklch(var(--p) / 0.2); color: oklch(var(--p)); opacity: 1; }
+.step-btn:active { background: oklch(var(--p) / 0.35); }
+.value-field:focus-within .step-btn { opacity: 0.9; }
+/* View-only remote clients: the well stays visible but reads as locked. */
+.value-field:has(.value-input:disabled) { opacity: 0.55; cursor: not-allowed; box-shadow: none; }
+.value-field:has(.value-input:disabled):hover { border-color: oklch(var(--bc) / 0.28); }
+.value-field:has(.value-input:disabled) .value-input { cursor: not-allowed; }
+.value-field:has(.value-input:disabled) .step-btn { pointer-events: none; }
 .split { display: flex; gap: 14px; }
 .split label { flex: 1; }
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
-.cal-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid oklch(var(--b3)); padding: 10px 0; }
-.cal-row label { flex: 1; display: flex; align-items: center; gap: 8px; margin: 0; }
-.cal-live { display: flex; flex-direction: column; align-items: flex-end; min-width: 6.5em; padding: 4px 10px; background: oklch(var(--b1)); border: 2px solid oklch(var(--p)); border-radius: 8px; }
+.cal-wide { grid-column: 1 / -1; }
+/* Sensor | Live | Sensor reading | Scale factor | Mode | Save */
+.cal-row { display: grid; grid-template-columns: 5.5em minmax(7em, 1fr) minmax(7em, 1fr) minmax(7em, 1fr) 8.5em 4.5em; align-items: center; gap: 12px; border-bottom: 1px solid oklch(var(--b3)); padding: 10px 0; }
+.cal-head { border-bottom-width: 2px; padding: 4px 0; font-size: 11px; font-weight: 600; opacity: 0.65; }
+.cal-name { font-weight: 600; }
+.cal-input { width: 100%; }
+.cal-live { display: flex; flex-direction: column; align-items: flex-end; padding: 4px 10px; background: oklch(var(--b1)); border: 2px solid oklch(var(--p)); border-radius: 8px; }
 .cal-live-value { font-size: 16px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 
 .lut-help { line-height: 1.5; margin-bottom: 10px; }
@@ -136,6 +181,9 @@ html, body { height: 100%; overflow: hidden; }
 .lut-table th { text-align: left; font-weight: 600; opacity: 0.65; padding: 4px 6px; }
 .lut-table td { padding: 4px 6px; border-top: 1px solid oklch(var(--b3)); }
 .lut-table input { width: 6.5em; text-align: right; }
+.lut-chart-card .card-body { display: flex; flex-direction: column; height: 100%; }
+.lut-chart-wrap { position: relative; width: 100%; min-height: 320px; flex: 1; }
+.lut-chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 .lut-row.lut-active { background: oklch(var(--p) / 0.12); }
 .lut-step { background: transparent; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; text-decoration: underline dotted; }
 

@@ -18,8 +18,8 @@ const MAX_JSON_BUFFER = 2048;
 // warm-up), so the connect handshake is far more patient than steady-state commands.
 const HANDSHAKE_TIMEOUT_MS = 1500;
 const HANDSHAKE_RETRIES = 5;
-// Link watchdog: the firmware sends nothing unsolicited, so liveness is "time since the last valid
-// reply". The lost threshold sits above the firmware's worst legitimate service gap (a held touch
+// Link watchdog: apart from touchscreen change reports the firmware sends nothing unsolicited, so
+// liveness is "time since the last valid reply". The lost threshold sits above the firmware's worst legitimate service gap (a held touch
 // blocks the API for up to ~5 s).
 const WATCHDOG_INTERVAL_MS = 500;
 const HEARTBEAT_AFTER_MS = 1500;
@@ -27,9 +27,8 @@ const HEARTBEAT_TIMEOUT_MS = 1500;
 const LINK_DEGRADED_MS = 3000;
 const LINK_LOST_MS = 8000;
 // Commands after which the firmware can legitimately stay silent for a while (EEPROM writes, W5500
-// re-init, the touch calibration screen). The watchdog treats the grace window as "recent activity".
+// re-init). The watchdog treats the grace window as "recent activity".
 const WATCHDOG_GRACE_MS = {
-    [CMD.CALIBRATE_DISPLAY]: 60000,
     [CMD.SET_NETWORK]: 10000,
     [CMD.SET_SCALER]: 3000,
     [CMD.SET_LUT]: 3000,
@@ -130,7 +129,6 @@ function jsonRequestFor(command, payload) {
         // a double would be sent as e.g. 5.650000095367432.
         case CMD.SET_LUT: return { setvluchan: payload[0], setvluvel: Number(payload.readFloatLE(1).toFixed(6)) };
         case CMD.GET_LUT: return { getvlu: 0 };
-        case CMD.CALIBRATE_DISPLAY: return { calibratedisplay: 0 };
         // V2.0.7 added the dhcp flag (WindTunnelAPI 1.xlsx). It is always sent: the firmware only applies the
         // address to the W5500 and re-creates the WebSocket server when `dhcp` is present, and it sends no reply.
         case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4), dhcp: payload.length > 6 ? payload[6] : 0 };
@@ -258,6 +256,43 @@ function sendBinary(command, payload = Buffer.alloc(0), options = {}) {
     return attempt;
 }
 
+// V2.0.7+ reports changes made on its own touchscreen as unsolicited flat objects that reuse the set
+// command keys: {"fanspeed":n}, {"angle":n}, {"animmode":m,"animr":r,"animg":g,"animb":b} and the same
+// with the amb* keys. No reply object carries any of these keys, so they can never be mistaken for one.
+const TOUCH_UPDATE_KEYS = ['fanspeed', 'angle', 'animmode', 'ambmode'];
+
+function finiteField(message, key) {
+    const raw = message[key];
+    if (raw === null || raw === '' || typeof raw === 'boolean') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+}
+
+function applyTouchUpdate(message) {
+    if (!TOUCH_UPDATE_KEYS.some((key) => key in message)) return false;
+    const fanSpeed = finiteField(message, 'fanspeed');
+    if (fanSpeed !== null) state.fanSpeed = Math.round(clamp(fanSpeed, 0, 100));
+    const angle = finiteField(message, 'angle');
+    if (angle !== null) state.angle = Math.round(clamp(angle, -180, 180));
+    const channel = (prefix, color) => ({
+        r: Math.round(clamp(finiteField(message, `${prefix}r`) ?? color.r, 0, 255)),
+        g: Math.round(clamp(finiteField(message, `${prefix}g`) ?? color.g, 0, 255)),
+        b: Math.round(clamp(finiteField(message, `${prefix}b`) ?? color.b, 0, 255))
+    });
+    const animMode = finiteField(message, 'animmode');
+    if (animMode !== null) {
+        state.leds.animMode = Math.round(clamp(animMode, 0, 4));
+        state.leds.animColor = channel('anim', state.leds.animColor);
+    }
+    const ambMode = finiteField(message, 'ambmode');
+    if (ambMode !== null) {
+        state.leds.ambMode = Math.round(clamp(ambMode, 0, 3));
+        state.leds.ambColor = channel('amb', state.leds.ambColor);
+    }
+    publish();
+    return true;
+}
+
 function handleData(chunk) {
     record('rx', chunk);
     if (SERIAL_DEBUG) console.log(`[serial] RX ${chunk.length}B: ${chunk.toString('hex')}`);
@@ -282,6 +317,8 @@ function handleData(chunk) {
         if (!response || typeof response !== 'object') continue;
         // Any well-formed reply object proves the controller is alive, even a late one.
         lastRxOkAt = Date.now();
+        // A touchscreen change is not the reply to anything, so it must never resolve the pending command.
+        if (applyTouchUpdate(response)) continue;
         const request = pendingCommand;
         if (!request) continue;
         if (request.command === CMD.GET_LUT) {

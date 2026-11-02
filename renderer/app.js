@@ -235,10 +235,19 @@ async function loadExperiments(selectedId) {
     applyExperiment(experiment);
 }
 
+// Admin -> Bootloader: Trigger Bootloader is only usable while the application link is up. After a
+// successful trigger it stays grey until the link has dropped and come back (see noteHardwareState()).
+let hardwareOnline = false;
+let triggerPending = false;
+let triggerSawOffline = false;
+let triggerPendingTimer = null;
+let bootloaderButtonState = 'disconnected';
+
 function render(value) {
     const stemRacingChartTypeChanged = state.lastDeviceState && state.lastDeviceState.stemRacingChartType !== value.stemRacingChartType;
     state.lastDeviceState = value;
     followMaster(value);
+    noteHardwareState(value.connected && !value.simulation && value.transport !== 'remote');
     state.connected = value.connected;
     state.simulation = value.simulation;
     state.sweepRunning = value.sweep.running;
@@ -305,7 +314,10 @@ function render(value) {
     $('stopLog').disabled = !value.logging.active;
     applyRemoteRestrictions(value);
 
-    const showLogPill = value.logging.active && !value.sweep.running;
+    // Sweep experiments keep their CSV open between sweeps but record nothing while idle, and
+    // their "Sweeping (n)" pill already covers the recording period -- so the "Logging" pill
+    // is only for experiments where an open log means points are being (or can be) captured.
+    const showLogPill = value.logging.active && !value.sweep.running && !(state.currentExperiment && state.currentExperiment.sweepType);
     $('logStatePill').classList.toggle('pill-active', showLogPill);
     $('logStatePill').classList.toggle('badge-pulse', showLogPill);
 
@@ -440,6 +452,22 @@ $('angleValue').addEventListener('change', async (event) => {
     log(`Motor angle set to ${clamped}°`);
 });
 $('angleValue').addEventListener('keydown', (event) => { if (event.key === 'Enter') event.target.blur(); });
+
+// Typeable boxes: select the whole number on focus so typing replaces it, and let the stacked
+// chevrons nudge it by 1 (Shift = 10) through the same `change` handlers as typing.
+['fanValue', 'angleValue'].forEach((id) => $(id).addEventListener('focus', (event) => event.target.select()));
+document.querySelectorAll('.step-btn').forEach((button) => {
+    button.addEventListener('mousedown', (event) => event.preventDefault()); // keep focus where it was
+    button.addEventListener('click', (event) => {
+        const input = $(button.dataset.stepTarget);
+        if (input.disabled) return;
+        const step = Number(button.dataset.step) * (event.shiftKey ? 10 : 1);
+        const next = Math.min(Number(input.max), Math.max(Number(input.min), Math.round(Number(input.value) || 0) + step));
+        if (String(next) === input.value) return;
+        input.value = next;
+        input.dispatchEvent(new Event('change'));
+    });
+});
 $('zeroSensors').addEventListener('click', async () => { const result = await window.windTunnel.zeroSensors(); log(result.message); });
 $('zeroMotor').addEventListener('click', async () => { await window.windTunnel.zeroMotor(); log('Motor zero command acknowledged'); });
 
@@ -597,7 +625,9 @@ async function unlockAdmin() {
                 resolve(true);
                 return;
             }
-            $('adminPasswordError').textContent = result.needsSetup ? 'Admin setup required.' : 'Incorrect password.';
+            $('adminPasswordError').textContent = result.needsSetup ? 'Admin setup required.'
+                : result.unreadable ? 'Admin password file cannot be read (wrong Windows user or damaged). Delete wind-tunnel-admin.json in the app data folder to set a new password.'
+                : (result.message || 'Incorrect password.');
             $('adminPasswordError').classList.remove('hidden');
             $('adminPasswordInput').value = '';
             $('adminPasswordInput').focus();
@@ -609,13 +639,45 @@ async function unlockAdmin() {
     });
 }
 
+$('changePasswordForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const message = $('changePasswordMessage');
+    const show = (text, ok) => {
+        message.textContent = text;
+        message.classList.toggle('text-error', !ok);
+        message.classList.toggle('text-success', ok);
+        message.classList.remove('hidden');
+    };
+    const current = $('currentPasswordInput').value;
+    const next = $('newPasswordInput').value;
+    if (!current || !next) { show('Enter the current and new password.', false); return; }
+    if (next !== $('confirmPasswordInput').value) { show('New password and confirmation do not match.', false); return; }
+    if (!(await ensureAdminUnlocked())) { show('Admin session is locked - nothing was changed.', false); return; }
+    const result = await window.windTunnel.changeAdminPassword(current, next);
+    if (!result.ok) {
+        show(result.unreadable ? 'Admin password file cannot be read.' : (result.message || 'Password was not changed.'), false);
+        log('Admin password change rejected', 'error');
+        return;
+    }
+    ['currentPasswordInput', 'newPasswordInput', 'confirmPasswordInput'].forEach((id) => { $(id).value = ''; });
+    show('Admin password changed.', true);
+    log('Admin password changed');
+});
+
+// The Admin session lapses after 30 minutes while this view stays open; ask for the password again
+// rather than letting the next calibration action fail with only a faint message.
+async function ensureAdminUnlocked() {
+    const status = await window.windTunnel.adminStatus();
+    return status.unlocked || unlockAdmin();
+}
+
 const SCALER_INPUT_IDS = ['liftScaler', 'dragScaler', 'pressureScaler'];
 const SCALER_MODE_IDS = ['liftMode', 'dragMode', 'pressureMode'];
 let scalerBusy = false;
 
 function setScalerBusy(busy) {
     scalerBusy = busy;
-    document.querySelectorAll('.calibration, #refreshScalers').forEach((button) => { button.disabled = busy; });
+    document.querySelectorAll('.calibration, #refreshScalers, #scalerZero').forEach((button) => { button.disabled = busy; });
 }
 
 async function refreshScalers() {
@@ -632,6 +694,31 @@ async function refreshScalers() {
     finally { setScalerBusy(false); }
 }
 $('refreshScalers').addEventListener('click', refreshScalers);
+$('scalerZero').addEventListener('click', async () => {
+    if (scalerBusy) return;
+    setScalerBusy(true);
+    try {
+        const result = await window.windTunnel.zeroSensors();
+        $('scalerAck').textContent = result.message;
+        log(result.message, result.ok ? 'info' : 'error');
+    } catch (error) {
+        const message = `Zero sensors failed: ${error.message}`;
+        $('scalerAck').textContent = message;
+        log(message, 'error');
+    } finally { setScalerBusy(false); }
+});
+// The operator types what the sensor is reading; the scale factor box is filled with numerator / reading
+// (4905 for lift and drag, 1000 for pressure). Nothing changes until a positive number is typed, and nothing
+// reaches the controller until Save.
+['lift', 'drag', 'pressure'].forEach((name) => {
+    $(`${name}Reading`).addEventListener('input', (event) => {
+        const reading = Number(event.target.value);
+        if (event.target.value === '' || !Number.isFinite(reading) || reading <= 0) return;
+        const factor = Number(event.target.dataset.numerator) / reading;
+        if (factor > 1e6) return;
+        $(`${name}Scaler`).value = factor.toFixed(6);
+    });
+});
 document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => {
     if (scalerBusy) return;
     const channel = Number(button.dataset.scaler);
@@ -640,6 +727,7 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
     // The raw text goes to the main process, which validates it: Number('') would silently be 0 here.
     setScalerBusy(true);
     try {
+        if (!(await ensureAdminUnlocked())) { $('scalerAck').textContent = 'Admin session is locked - nothing was written.'; return; }
         const mode = Number($(modeId).value);
         const result = await window.windTunnel.setScaler(channel, mode, $(inputId).value);
         if (result.ok) {
@@ -658,7 +746,6 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
         log(message, 'error');
     } finally { setScalerBusy(false); }
 }));
-$('calibrateDisplayBtn').addEventListener('click', async () => { const result = await window.windTunnel.calibrateDisplay(); $('scalerAck').textContent = result.message; log(result.message, result.ok ? 'info' : 'error'); });
 
 // Velocity lookup table. Each fan step's velocity is derived from a recorded pressure with
 // V = sqrt(2*|dP| / rho) (CP0704 Worksheet 1, rho = 1.20 kg/m3). Pressure is only a working value
@@ -683,6 +770,17 @@ function renderLut(entries) {
             <td><button type="button" class="lut-step" data-index="${index}" title="Set the fan to ${(index + 1) * 10}%">Fan ${(index + 1) * 10}%</button></td>
             <td><input type="number" step="any" class="input input-bordered input-sm lut-pressure" id="lutPressure${index}" data-index="${index}"></td>
             <td><input type="number" step="0.01" min="0" class="input input-bordered input-sm lut-velocity" id="lutVelocity${index}" value="${formatVelocity(value)}"></td>        </tr>`).join('');
+    updateLutChart();
+}
+
+// Plots the velocity column (y) against the fan steps 10..100 % (x), so it follows typed pressures,
+// hand-typed velocities, a Refresh and a confirmed Save alike.
+function updateLutChart() {
+    const velocities = Array.from({ length: LUT_STEPS }, (_unused, index) => {
+        const raw = $(`lutVelocity${index}`)?.value;
+        return raw === undefined || raw === '' ? NaN : Number(raw);
+    });
+    WindTunnelCharts.updateLutChart(velocities);
 }
 
 function setLutActive(index) {
@@ -691,6 +789,7 @@ function setLutActive(index) {
 
 function lutMessage(message, ok = true) {
     $('lutAck').textContent = message;
+    $('lutAck').classList.toggle('text-error', !ok);
     log(message, ok ? 'info' : 'error');
 }
 
@@ -722,11 +821,14 @@ async function advanceLutStep(index) {
 const LUT_ACTION_BUTTONS = '.lut-step, #lutStart, #lutStop, #lutZero, #saveLut';
 
 // Runs one fan/sensor action at a time so a double-click cannot interleave two of them.
-async function runLutAction(action) {
+async function runLutAction(action, { needsAdmin = true } = {}) {
     if (lutBusy) return;
     lutBusy = true;
     document.querySelectorAll(LUT_ACTION_BUTTONS).forEach((button) => { button.disabled = true; });
-    try { await action(); }
+    try {
+        if (needsAdmin && !(await ensureAdminUnlocked())) { lutMessage('Admin session is locked - unlock it to continue.', false); return; }
+        await action();
+    }
     catch (error) { lutMessage(`Velocity table action failed: ${error.message}`, false); }
     finally {
         lutBusy = false;
@@ -757,6 +859,11 @@ function updateScalerLive(value) {
 function updateLutLive(value) {
     $('lutLivePressure').textContent = Number.isFinite(value.sensors?.pressure) ? value.sensors.pressure.toFixed(1) : '-';
     $('lutLiveFan').textContent = value.fanSpeed;
+    // Green once the fan is running so Start capture is not pressed again (that would restart from 10%).
+    const running = value.fanSpeed > 0;
+    $('lutStart').classList.toggle('btn-success', running);
+    $('lutStart').classList.toggle('btn-secondary', !running);
+    $('lutStart').title = running ? 'Capture in progress - the fan is running' : '';
 }
 
 $('lut').addEventListener('input', (event) => {
@@ -768,6 +875,7 @@ $('lut').addEventListener('input', (event) => {
         // A hand-typed velocity no longer matches any recorded pressure, so drop the stale one.
         $(`lutPressure${event.target.id.replace('lutVelocity', '')}`).value = '';
     }
+    updateLutChart();
 });
 $('lut').addEventListener('click', (event) => {
     const step = event.target.closest('.lut-step');
@@ -786,9 +894,9 @@ $('lut').addEventListener('keydown', (event) => {
 $('lutZero').addEventListener('click', () => runLutAction(async () => {
     const result = await window.windTunnel.zeroSensors();
     lutMessage(result.message, result.ok);
-}));
+}, { needsAdmin: false }));
 $('lutStart').addEventListener('click', () => runLutAction(() => selectLutStep(0)));
-$('lutStop').addEventListener('click', () => runLutAction(async () => { await setLutFan(0); setLutActive(null); }));
+$('lutStop').addEventListener('click', () => runLutAction(async () => { await setLutFan(0); setLutActive(null); }, { needsAdmin: false }));
 $('saveLut').addEventListener('click', () => runLutAction(async () => {
     const velocities = Array.from({ length: LUT_STEPS }, (_unused, index) => {
         const raw = $(`lutVelocity${index}`).value;
@@ -797,7 +905,7 @@ $('saveLut').addEventListener('click', () => runLutAction(async () => {
     const result = await window.windTunnel.setLutTable(velocities);
     lutMessage(result.message, result.acknowledged);
     // Only a controller-confirmed table replaces what was typed; on any failure the operator's values stay put.
-    if (result.acknowledged) { result.entries.forEach((entry, index) => { $(`lutVelocity${index}`).value = formatVelocity(entry); }); lutDirty = false; }
+    if (result.acknowledged) { result.entries.forEach((entry, index) => { $(`lutVelocity${index}`).value = formatVelocity(entry); }); lutDirty = false; updateLutChart(); }
 }));
 $('refreshLut').addEventListener('click', () => refreshLut({ manual: true }));
 renderLut(Array(LUT_STEPS).fill(NaN));
@@ -1024,6 +1132,14 @@ $('remoteDisconnect').addEventListener('click', async () => {
 let bootloaderConnected = false;
 let hexFileLoaded = false;
 
+// The label shows only the file name, and only while a hex file is actually loaded in the current
+// bootloader session; the full path is never displayed.
+function clearHexFile() {
+    hexFileLoaded = false;
+    state.hexPath = null;
+    $('hexFilePathLabel').textContent = 'No hex file loaded';
+}
+
 function firmwareUsbIds() {
     return { vid: $('bootloaderVid').value.trim(), pid: $('bootloaderPid').value.trim() };
 }
@@ -1044,9 +1160,10 @@ function hideFirmwareProgress() {
 function setBootloaderButtonState(bootState) {
     const ids = ['connectBtn', 'triggerBootloaderBtn', 'loadHexBtn', 'eraseProgramVerify', 'runAppBtn'];
     const enable = (id, value) => { const el = $(id); if (el) el.disabled = !value; };
+    bootloaderButtonState = bootState;
     switch (bootState) {
         case 'disconnected':
-            enable('connectBtn', true); enable('triggerBootloaderBtn', true); enable('loadHexBtn', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
+            enable('connectBtn', true); enable('triggerBootloaderBtn', hardwareOnline && !triggerPending); enable('loadHexBtn', false); enable('eraseProgramVerify', false); enable('runAppBtn', false);
             break;
         case 'connected':
             enable('connectBtn', true); enable('triggerBootloaderBtn', false); enable('loadHexBtn', true); enable('eraseProgramVerify', false); enable('runAppBtn', false);
@@ -1070,25 +1187,54 @@ function enableBootloaderButtons(enabled) {
     setBootloaderButtonState(enabled ? (hexFileLoaded ? 'hex_loaded' : 'connected') : 'disconnected');
 }
 
+function refreshTriggerButton() {
+    if (bootloaderButtonState !== 'disconnected') return;
+    const btn = $('triggerBootloaderBtn');
+    if (btn) btn.disabled = !(hardwareOnline && !triggerPending);
+}
+
+function clearTriggerPending() {
+    triggerPending = false;
+    triggerSawOffline = false;
+    clearTimeout(triggerPendingTimer);
+    triggerPendingTimer = null;
+}
+
+// Called from render() on every pushed state. A sent trigger keeps the button grey until the link has
+// gone offline and come back online, which is the controller returning from bootloader mode.
+function noteHardwareState(online) {
+    hardwareOnline = online;
+    if (triggerPending) {
+        if (!online) triggerSawOffline = true;
+        else if (triggerSawOffline) clearTriggerPending();
+    }
+    refreshTriggerButton();
+}
+
 // Mirrors Process Control V2's triggerBootloader(): send the JSON trigger, then leave Connect enabled
 // (Connect itself polls for the HID device while it re-enumerates).
 $('triggerBootloaderBtn').addEventListener('click', async () => {
-    if (!window.confirm('Put the controller into bootloader mode? The fan will be stopped and the application will stop running until firmware is programmed or "Run Application" is used.')) return;
-    const btn = $('triggerBootloaderBtn');
-    btn.disabled = true;
+    triggerPending = true;
+    triggerSawOffline = false;
+    refreshTriggerButton();
     log('Sending bootloader trigger...', 'info');
     try {
         const result = await window.windTunnel.bootloaderTrigger();
         if (result && result.ok) {
             log(result.message, 'info');
             $('connectBtn').disabled = false;
+            // If the controller ignores the command (older firmware) the link never drops, so give the
+            // button back after a while instead of leaving it grey for good.
+            triggerPendingTimer = setTimeout(() => { clearTriggerPending(); refreshTriggerButton(); }, 20000);
         } else {
             log(`Failed: ${result ? result.message : 'Unknown'}`, 'error');
-            btn.disabled = false;
+            clearTriggerPending();
+            refreshTriggerButton();
         }
     } catch (error) {
         log(`Error: ${error.message}`, 'error');
-        btn.disabled = false;
+        clearTriggerPending();
+        refreshTriggerButton();
     }
 });
 
@@ -1098,7 +1244,7 @@ $('connectBtn').addEventListener('click', async () => {
         log('Disconnecting from bootloader...', 'info');
         await window.windTunnel.bootloaderDisconnect();
         bootloaderConnected = false;
-        hexFileLoaded = false;
+        clearHexFile();
         connectBtn.textContent = 'Connect';
         setBootloaderButtonState('disconnected');
         log('Disconnected', 'info');
@@ -1112,18 +1258,20 @@ $('connectBtn').addEventListener('click', async () => {
         const result = await window.windTunnel.bootloaderConnect(vid, pid);
         if (result && result.ok) {
             bootloaderConnected = true;
+            clearHexFile();
+            if (result.productId) $('bootloaderPid').value = result.productId;
             connectBtn.textContent = 'Disconnect';
             setBootloaderButtonState('connected');
             log('Connected -- load a hex file to continue', 'info');
         } else {
             log(result ? result.message : 'Connection failed', 'error');
             connectBtn.disabled = false;
-            $('triggerBootloaderBtn').disabled = false;
+            refreshTriggerButton();
         }
     } catch (error) {
         log(`Connection error: ${error.message}`, 'error');
         connectBtn.disabled = false;
-        $('triggerBootloaderBtn').disabled = false;
+        refreshTriggerButton();
     }
 });
 
@@ -1137,7 +1285,7 @@ $('loadHexBtn').addEventListener('click', async () => {
             // Only an accepted file becomes the displayed/current one, so a rejected pick can never
             // leave the label naming a file different from the one actually loaded.
             state.hexPath = picked;
-            $('hexFilePathLabel').textContent = picked;
+            $('hexFilePathLabel').textContent = picked.split(/[\\/]/).pop();
             hexFileLoaded = true;
             log('Hex loaded -- click Erase-Program-Verify', 'info');
             setBootloaderButtonState('hex_loaded');
@@ -1194,7 +1342,7 @@ $('runAppBtn').addEventListener('click', async () => {
         log(`Error: ${error.message}`, 'error');
     }
     bootloaderConnected = false;
-    hexFileLoaded = false;
+    clearHexFile();
     $('connectBtn').textContent = 'Connect';
     setBootloaderButtonState('disconnected');
 });
@@ -1231,7 +1379,7 @@ $('refreshAudit').addEventListener('click', refreshAudit);
 window.windTunnel.onAuditUpdate(renderAudit);
 window.windTunnel.onLogEvent((event) => {
     $('logStatus').textContent = `Logging to ${event.path} (${event.rowCount} rows)`;
-    if (!state.sweepRunning) $('logStatePill').classList.add('pill-active', 'badge-pulse');
+    if (!state.sweepRunning && !(state.currentExperiment && state.currentExperiment.sweepType)) $('logStatePill').classList.add('pill-active', 'badge-pulse');
 });
 
 // Download / restart prompts are native dialogs from the main process; this just shows status.
@@ -1250,6 +1398,8 @@ setView_bindNav();
 window.windTunnel.onState(render);
 window.windTunnel.getState().then(async (value) => {
     WindTunnelCharts.createCharts();
+    WindTunnelCharts.createLutChart();
+    updateLutChart();
     await loadExperiments(value.experimentId);
     render(value);
     log(value.simulation ? 'Wind Tunnel UI ready; explicit simulation mode active' : 'Wind Tunnel UI ready; searching for USB controller');

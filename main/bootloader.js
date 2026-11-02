@@ -54,6 +54,9 @@ const RECORDS_PER_COMMAND = 10;
 // the device may still be enumerating after a bootloader-mode trigger.
 const CONNECT_POLL_RETRIES = 10;
 const CONNECT_POLL_INTERVAL_MS = 500;
+// Wind Tunnel application PID (serial identity); never treated as the bootloader by the PID fallback.
+const APPLICATION_PRODUCT_ID = 0xF010;
+const CONNECT_FALLBACK_AFTER_ATTEMPT = 3;
 
 const CRC_TABLE = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
@@ -199,18 +202,27 @@ async function connect(vid, pid) {
 
     disconnect();
 
-    let devicePath = null;
+    // The exact VID/PID wins. Not part of Process Control V2's port: if that PID never shows up but
+    // exactly one other HID product ID exists under the same VID (the application's own PID excluded),
+    // that device is the bootloader with a PID the operator did not know, so use it.
+    let found = null;
+    let seenPids = [];
     for (let attempt = 1; attempt <= CONNECT_POLL_RETRIES; attempt += 1) {
-        const matches = HID.devices().filter((d) => d.vendorId === vid && d.productId === pid);
-        if (matches.length) { devicePath = matches[0].path; break; }
+        const devices = HID.devices().filter((d) => d.vendorId === vid);
+        const exact = devices.find((d) => d.productId === pid);
+        if (exact) { found = exact; break; }
+        const others = devices.filter((d) => d.productId !== APPLICATION_PRODUCT_ID);
+        seenPids = [...new Set(others.map((d) => d.productId))];
+        if (seenPids.length === 1 && attempt >= CONNECT_FALLBACK_AFTER_ATTEMPT) { found = others[0]; break; }
         if (attempt < CONNECT_POLL_RETRIES) await sleep(CONNECT_POLL_INTERVAL_MS);
     }
-    if (!devicePath) {
-        throw new Error(`USB bootloader device with VID 0x${vid.toString(16).toUpperCase()} / PID 0x${pid.toString(16).toUpperCase()} was not found after ${CONNECT_POLL_RETRIES} attempts. Put the controller into bootloader mode and confirm the PID in Device Manager.`);
+    if (!found) {
+        const present = seenPids.length ? ` USB HID devices present with that VID: PID ${seenPids.map((p) => `0x${p.toString(16).toUpperCase()}`).join(', ')}.` : ' No USB HID device with that VID is present.';
+        throw new Error(`USB bootloader device with VID 0x${vid.toString(16).toUpperCase()} / PID 0x${pid.toString(16).toUpperCase()} was not found after ${CONNECT_POLL_RETRIES} attempts.${present} Put the controller into bootloader mode and confirm the PID in Device Manager.`);
     }
 
     try {
-        device = new HID.HID(devicePath);
+        device = new HID.HID(found.path);
     } catch (error) {
         device = null;
         throw new Error(`Failed to open bootloader device: ${error.message}`);
@@ -219,7 +231,7 @@ async function connect(vid, pid) {
     assembler = createFrameAssembler();
     device.on('data', onData);
     device.on('error', onError);
-    return true;
+    return { vendorId: found.vendorId, productId: found.productId };
 }
 
 function disconnect() {

@@ -228,6 +228,7 @@ async function setLutFan({ percent }) {
     }
     if (state.simulation) {
         await serial.setFanSpeed(target, { source: 'calibrator' });
+        publish();
         return { ok: true, fanSpeed: state.fanSpeed, message: `Fan set to ${target}%` };
     }
     // serial.setFanSpeed swallows send errors, so send directly: the capture must know the fan really moved.
@@ -241,18 +242,6 @@ async function setLutFan({ percent }) {
     state.fanSpeed = target;
     publish();
     return { ok: true, fanSpeed: target, message: `Fan set to ${target}%` };
-}
-
-async function calibrateDisplay() {
-    const blocked = guard();
-    if (blocked) return { ok: false, acknowledged: false, message: blocked };
-    try {
-        await serial.sendBinary(CMD.CALIBRATE_DISPLAY, Buffer.alloc(0), { source: 'calibrator' });
-        // The firmware sends no reply to this command, so it is reported as sent, never as acknowledged.
-        return { ok: true, acknowledged: false, sent: true, message: 'Display calibration started - follow the prompts on the controller touchscreen.' };
-    } catch (error) {
-        return { ok: false, acknowledged: false, message: `Write not acknowledged: ${error.message}` };
-    }
 }
 
 // V2.0.7 firmware stores ip0-ip3, port and the dhcp flag in EEPROM and immediately re-applies them to
@@ -280,4 +269,4 @@ async function setNetwork({ ip0, ip1, ip2, ip3, port, dhcp = false }) {
     }
 }
 
-module.exports = { setScaler, getScalers, setLutTable, getLut, setLutFan, calibrateDisplay, setNetwork };
+module.exports = { setScaler, getScalers, setLutTable, getLut, setLutFan, setNetwork };

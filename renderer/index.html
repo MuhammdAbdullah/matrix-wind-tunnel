@@ -92,8 +92,8 @@
                 <article class="card bg-base-200 border border-base-300">
                     <div class="card-body">
                         <div class="panel-heading"><h2 class="card-title text-base">Wind Tunnel Controls</h2></div>
-                        <label>Fan Speed <span class="value-edit"><input id="fanValue" type="number" class="value-input" min="0" max="100" step="1" value="0">%</span><input id="fanSlider" type="range" class="range" min="0" max="100" value="0"></label>
-                        <label>Motor Angle <span class="value-edit"><input id="angleValue" type="number" class="value-input" min="-180" max="180" step="1" value="0">°</span><input id="angleSlider" type="range" class="range" min="-180" max="180" value="0"></label>
+                        <label>Fan Speed <span class="value-edit"><span class="value-field"><input id="fanValue" type="number" class="value-input" min="0" max="100" step="1" value="0" aria-label="Fan speed value"><span class="value-unit">%</span><span class="value-steppers"><button type="button" class="step-btn" data-step-target="fanValue" data-step="1" tabindex="-1" aria-label="Increase fan speed"><svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 5l4-4 4 4"/></svg></button><button type="button" class="step-btn" data-step-target="fanValue" data-step="-1" tabindex="-1" aria-label="Decrease fan speed"><svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg></button></span></span></span><input id="fanSlider" type="range" class="range" min="0" max="100" value="0"></label>
+                        <label>Motor Angle <span class="value-edit"><span class="value-field"><input id="angleValue" type="number" class="value-input" min="-180" max="180" step="1" value="0" aria-label="Motor angle value"><span class="value-unit">°</span><span class="value-steppers"><button type="button" class="step-btn" data-step-target="angleValue" data-step="1" tabindex="-1" aria-label="Increase motor angle"><svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 5l4-4 4 4"/></svg></button><button type="button" class="step-btn" data-step-target="angleValue" data-step="-1" tabindex="-1" aria-label="Decrease motor angle"><svg viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg></button></span></span></span><input id="angleSlider" type="range" class="range" min="-180" max="180" value="0"></label>
                         <div class="button-row">
                             <button id="zeroSensors" class="btn btn-secondary btn-sm">Zero Sensors</button>
                             <button id="zeroMotor" class="btn btn-secondary btn-sm">Zero Motor</button>
@@ -255,23 +255,22 @@
                     <p>Calibration writes are available only while Control is idle and Admin is unlocked. Every change is read back from the controller before it is shown as saved.</p>
                 </div>
                 <div class="calibration-grid">
-                    <article class="card bg-base-200 border border-base-300">
+                    <article class="card bg-base-200 border border-base-300 cal-wide">
                         <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Sensor Scalers</h2><button id="refreshScalers" class="btn btn-ghost btn-xs">Refresh</button></div>
-                            <div class="cal-row"><label>Lift <input id="liftScaler" class="input input-bordered input-sm w-24 text-right" value="0.755"></label><span class="cal-live" title="Live lift reading from the sensor"><span class="lut-live-label">Live</span><span class="cal-live-value"><strong id="liftLive">-</strong> mN</span></span><select id="liftMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="0">Save</button></div>
-                            <div class="cal-row"><label>Drag <input id="dragScaler" class="input input-bordered input-sm w-24 text-right" value="0.698"></label><span class="cal-live" title="Live drag reading from the sensor"><span class="lut-live-label">Live</span><span class="cal-live-value"><strong id="dragLive">-</strong> mN</span></span><select id="dragMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="1">Save</button></div>
-                            <div class="cal-row"><label>Pressure <input id="pressureScaler" class="input input-bordered input-sm w-24 text-right" value="0.150"></label><span class="cal-live" title="Live pressure reading from the sensor"><span class="lut-live-label">Live</span><span class="cal-live-value"><strong id="pressureLive">-</strong> Pa</span></span><select id="pressureMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="2">Save</button></div>
-                            <p class="text-xs opacity-70">Absolute replaces the stored scaler with the value entered. Relative multiplies the stored scaler by the value entered (for example 0.95 lowers it by 5%).</p>
-                            <button id="calibrateDisplayBtn" class="btn btn-secondary btn-sm mt-2">Calibrate Display</button>
+                            <div class="panel-heading"><h2 class="card-title text-base">Sensor Scalers</h2><div class="panel-actions"><button id="scalerZero" class="btn btn-secondary btn-xs">Zero Sensor</button><button id="refreshScalers" class="btn btn-ghost btn-xs">Refresh</button></div></div>
+                            <div class="cal-row cal-head"><span>Sensor</span><span>Live</span><span>Sensor reading</span><span>Scale factor</span><span>Mode</span><span></span></div>
+                            <div class="cal-row"><span class="cal-name">Lift</span><span class="cal-live" title="Live lift reading from the sensor"><span class="cal-live-value"><strong id="liftLive">-</strong> mN</span></span><input id="liftReading" class="input input-bordered input-sm cal-input text-right" type="number" step="any" min="0" placeholder="mN" data-numerator="4905" title="Type the value the sensor is reading; scale factor = 4905 / this value"><input id="liftScaler" class="input input-bordered input-sm cal-input text-right" value="0.755" title="Scale factor sent to the controller"><select id="liftMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="0">Save</button></div>
+                            <div class="cal-row"><span class="cal-name">Drag</span><span class="cal-live" title="Live drag reading from the sensor"><span class="cal-live-value"><strong id="dragLive">-</strong> mN</span></span><input id="dragReading" class="input input-bordered input-sm cal-input text-right" type="number" step="any" min="0" placeholder="mN" data-numerator="4905" title="Type the value the sensor is reading; scale factor = 4905 / this value"><input id="dragScaler" class="input input-bordered input-sm cal-input text-right" value="0.698" title="Scale factor sent to the controller"><select id="dragMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="1">Save</button></div>
+                            <div class="cal-row"><span class="cal-name">Pressure</span><span class="cal-live" title="Live pressure reading from the sensor"><span class="cal-live-value"><strong id="pressureLive">-</strong> Pa</span></span><input id="pressureReading" class="input input-bordered input-sm cal-input text-right" type="number" step="any" min="0" placeholder="Pa" data-numerator="1000" title="Type the value the sensor is reading; scale factor = 1000 / this value"><input id="pressureScaler" class="input input-bordered input-sm cal-input text-right" value="0.150" title="Scale factor sent to the controller"><select id="pressureMode" class="select select-bordered select-sm"><option value="0">Absolute</option><option value="1">Relative</option></select><button class="btn btn-primary btn-sm calibration" data-scaler="2">Save</button></div>
+                            <p class="text-xs opacity-70">Type the value the sensor is reading: lift and drag give 4905 / reading, pressure gives 1000 / reading, filled into the scale factor box. Absolute replaces the stored scaler with the value entered. Relative multiplies the stored scaler by the value entered (for example 0.95 lowers it by 5%).</p>
                             <p id="scalerAck" class="text-xs opacity-60 mt-2">No write yet this session.</p>
                         </div>
                     </article>
                     <article class="card bg-base-200 border border-base-300">
                         <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Velocity Lookup Table</h2><button id="refreshLut" class="btn btn-ghost btn-xs">Refresh</button></div>
+                            <div class="panel-heading"><h2 class="card-title text-base">Velocity Lookup Table</h2><div class="panel-actions"><button id="lutZero" class="btn btn-secondary btn-xs">Zero Sensor</button><button id="refreshLut" class="btn btn-ghost btn-xs">Refresh</button></div></div>
                             <p class="text-xs opacity-70 lut-help">With the fan stopped, click <strong>Zero Sensor</strong>. Then click <strong>Start capture</strong> to run the fan at 10%, wait for the pressure to settle and type it in the Pressure box. Press <strong>Enter</strong>: the pressure is converted to air speed with V = &radic;(2&middot;|&Delta;P| / &rho;) (&rho; = 1.20 kg/m&sup3;, CP0704 Worksheet 1) and the fan moves on to the next 10%. Enter after 100% stops the fan. You can click any Fan % to jump to it, or type a velocity directly. Nothing is sent to the controller until you press <strong>Save Table</strong>.</p>
                             <div class="lut-capture">
-                                <button id="lutZero" class="btn btn-secondary btn-sm">Zero Sensor</button>
                                 <button id="lutStart" class="btn btn-secondary btn-sm">Start capture</button>
                                 <button id="lutStop" class="btn btn-error btn-sm">Stop fan</button>
                                 <div class="lut-live">
@@ -285,6 +284,12 @@
                             </table>
                             <div class="button-row"><button id="saveLut" class="btn btn-primary btn-sm">Save Table</button></div>
                             <p id="lutAck" class="text-xs opacity-60 mt-2">No write yet this session.</p>
+                        </div>
+                    </article>
+                    <article class="card bg-base-200 border border-base-300 lut-chart-card">
+                        <div class="card-body">
+                            <div class="panel-heading"><h2 class="card-title text-base">Velocity vs Fan Speed</h2></div>
+                            <div class="lut-chart-wrap"><canvas id="lutChart"></canvas></div>
                         </div>
                     </article>
                 </div>
@@ -385,10 +390,10 @@
                             <div class="panel-heading"><h2 class="card-title text-base">Communication Settings</h2></div>
                             <div class="split">
                                 <label>USB VID<input id="bootloaderVid" class="input input-bordered input-sm w-full" value="0x12BF"></label>
-                                <label>USB PID<input id="bootloaderPid" class="input input-bordered input-sm w-full" placeholder="unconfirmed -- see note"></label>
+                                <label>USB PID<input id="bootloaderPid" class="input input-bordered input-sm w-full" value="0xA1" placeholder="0xA1"></label>
                             </div>
                             <label class="flex items-center gap-2 mt-2"><input type="checkbox" id="bootloaderUsbEnable" class="checkbox checkbox-sm" checked disabled> USB HID (only transport this bootloader supports)</label>
-                            <p class="text-xs opacity-60 mt-2">The Wind Tunnel bootloader's USB PID is not confirmed in this codebase -- it is very likely different from the application's PID (0xF010). Open Windows Device Manager while the controller is in bootloader mode and enter the PID shown there before using Detect/Erase/Program/Verify/Run.</p>
+                            <p class="text-xs opacity-60 mt-2">The PID is pre-filled with 0xA1, the default in Process Control V2's bootloader screen (the application itself is 0xF010). It has not been confirmed on a Wind Tunnel controller: if no device with that PID appears but exactly one other USB HID device with this VID does, Connect uses it and fills in its PID. Otherwise check the PID in Windows Device Manager while the controller is in bootloader mode.</p>
                         </div>
                     </article>
                     <article class="card bg-base-200 border border-base-300">
@@ -397,17 +402,15 @@
                             <button class="btn btn-sm btn-outline" id="loadHexBtn" disabled>Load Hex File</button>
                             <p class="text-xs opacity-60 mt-1" id="hexFilePathLabel">No hex file loaded</p>
                             <div class="button-row mt-2">
+                                <button class="btn btn-sm btn-outline" id="triggerBootloaderBtn" disabled title="Sends the {&quot;BL&quot;:1} JSON command (same as Process Control V2) to put the connected controller into bootloader mode.">Trigger Bootloader</button>
+                                <button class="btn btn-primary btn-sm" id="connectBtn">Connect</button>
+                                <button class="btn btn-sm btn-error" id="eraseProgramVerify" disabled>Erase-Program-Verify</button>
+                                <button class="btn btn-sm btn-outline" id="runAppBtn" disabled>Run Application</button>
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="erase" id="eraseBtn" style="display:none;">Erase</button>
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="program" id="programBtn" style="display:none;">Program</button>
                                 <button class="btn btn-sm btn-outline firmware-action" data-action="verify" id="verifyBtn" style="display:none;">Verify</button>
-                                <button class="btn btn-sm btn-outline" id="runAppBtn" disabled>Run Application</button>
-                                <button class="btn btn-sm btn-error" id="eraseProgramVerify" disabled>Erase-Program-Verify</button>
-                                <button class="btn btn-primary btn-sm" id="connectBtn">Connect</button>
                             </div>
-                            <div class="button-row mt-2">
-                                <button class="btn btn-sm btn-outline" id="triggerBootloaderBtn" disabled title="Sends the {&quot;BL&quot;:1} JSON command (same as Process Control V2) to put the connected controller into bootloader mode.">Trigger Bootloader</button>
-                            </div>
-                            <p class="text-xs opacity-60 mt-2">Click Trigger Bootloader to send the bootloader command to the connected controller, then click Connect. If the controller does not respond, enter bootloader mode with its touchscreen "Bootloader" menu entry instead.</p>
+                            <p class="text-xs opacity-60 mt-2">Click Trigger Bootloader to send the bootloader command to the connected controller, then click Connect. Trigger Bootloader stays grey after it is sent and becomes available again once the controller is back online. If the controller does not respond, enter bootloader mode with its touchscreen "Bootloader" menu entry instead.</p>
                             <div id="firmwareProgressSection" class="mt-2 hidden">
                                 <div class="text-xs font-bold text-center" id="firmwareProgressLabel">Working...</div>
                                 <progress class="progress progress-success w-full" id="firmwareProgressFill" value="0" max="100"></progress>
@@ -432,6 +435,19 @@
 
             <!-- SETTINGS TAB -->
             <div id="settingsTab" class="tab-content">
+                <article class="card bg-base-200 border border-base-300 mb-4">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Change Admin Password</h2></div>
+                        <p class="text-xs opacity-60">The password is stored as a salted scrypt hash, encrypted with the operating system keystore. Minimum 8 characters.</p>
+                        <form id="changePasswordForm" class="grid gap-2 mt-2 max-w-sm">
+                            <input type="password" id="currentPasswordInput" class="input input-bordered input-sm" placeholder="Current password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+                            <input type="password" id="newPasswordInput" class="input input-bordered input-sm" placeholder="New password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+                            <input type="password" id="confirmPasswordInput" class="input input-bordered input-sm" placeholder="Confirm new password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+                            <p id="changePasswordMessage" class="text-xs hidden"></p>
+                            <div><button type="submit" id="changePasswordSubmit" class="btn btn-sm btn-primary">Change Password</button></div>
+                        </form>
+                    </div>
+                </article>
                 <article class="card bg-base-200 border border-base-300">
                     <div class="card-body">
                         <div class="panel-heading"><h2 class="card-title text-base">Configuration And Audit</h2><button id="refreshAudit" class="btn btn-ghost btn-xs">Refresh</button></div>
@@ -449,7 +465,7 @@
         <h3 class="font-bold text-lg" id="adminPasswordModalTitle">Admin Password Required</h3>
         <p class="text-xs opacity-60 mt-1" id="adminPasswordModalHint">Enter the Admin password to unlock calibration, bootloader, and diagnostic controls.</p>
         <form id="adminPasswordForm" method="dialog">
-            <input type="password" id="adminPasswordInput" class="input input-bordered w-full mt-4" placeholder="Password" autocomplete="current-password">
+            <input type="password" id="adminPasswordInput" class="input input-bordered w-full mt-4" placeholder="Password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
             <p id="adminPasswordError" class="text-xs text-error mt-2 hidden">Incorrect password.</p>
             <div class="modal-action">
                 <button type="button" id="adminPasswordCancel" class="btn btn-sm btn-outline">Cancel</button>

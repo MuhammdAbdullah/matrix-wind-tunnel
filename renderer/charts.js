@@ -126,6 +126,62 @@ const WindTunnelCharts = (() => {
     function updateTheme() {
         applyThemeColors(liveChart);
         applyThemeColors(historyChart);
+        applyLutThemeColors();
+    }
+
+    // Admin velocity table: Velocity (y) against Fan speed (x), one point per 10 % fan step.
+    let lutChart = null;
+
+    function createLutChart() {
+        const canvas = document.getElementById('lutChart');
+        if (!canvas || lutChart) return;
+        const textColor = themeTextColor();
+        const gridColor = 'rgba(130,154,170,0.12)';
+        lutChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: 'Velocity (m/s)',
+                    data: [],
+                    borderColor: TRACE_COLORS.velocity,
+                    backgroundColor: TRACE_COLORS.velocity,
+                    borderWidth: 2,
+                    pointRadius: 4,
+                    tension: 0.3,
+                    spanGaps: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (item) => `${item.parsed.y} m/s at ${item.parsed.x} %` } }
+                },
+                scales: {
+                    x: { type: 'linear', min: 0, max: 100, ticks: { color: textColor, stepSize: 10 }, title: { display: true, text: 'Fan speed (%)', color: textColor }, grid: { color: gridColor } },
+                    y: { beginAtZero: true, ticks: { color: textColor }, title: { display: true, text: 'Velocity (m/s)', color: textColor }, grid: { color: gridColor } }
+                }
+            }
+        });
+    }
+
+    function applyLutThemeColors() {
+        if (!lutChart) return;
+        const textColor = themeTextColor();
+        ['x', 'y'].forEach((axis) => {
+            lutChart.options.scales[axis].ticks.color = textColor;
+            lutChart.options.scales[axis].title.color = textColor;
+        });
+        lutChart.update('none');
+    }
+
+    // velocities[i] belongs to fan (i + 1) * 10 %; blank/non-numeric entries leave a gap instead of plotting as 0.
+    function updateLutChart(velocities) {
+        if (!lutChart) return;
+        lutChart.data.datasets[0].data = velocities.map((velocity, index) => ({ x: (index + 1) * 10, y: Number.isFinite(velocity) ? velocity : null }));
+        lutChart.update();
     }
 
     function buildDatasets(traces, secondaryTraces = []) {
@@ -314,5 +370,5 @@ const WindTunnelCharts = (() => {
         historyChart.update();
     }
 
-    return { createCharts, configureForExperiment, updateLive, updateHistory, updateHistoryRuns, customTitle, updateTheme };
+    return { createCharts, createLutChart, updateLutChart, configureForExperiment, updateLive, updateHistory, updateHistoryRuns, customTitle, updateTheme };
 })();

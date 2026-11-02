@@ -10,7 +10,6 @@ const CMD = {
     GET_SCALERS: 'I',
     SET_LUT: 'J',
     GET_LUT: 'K',
-    CALIBRATE_DISPLAY: 'L',
     SET_NETWORK: 'M',
     ENTER_BOOTLOADER: 'N'
 };

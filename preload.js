@@ -39,7 +39,6 @@ contextBridge.exposeInMainWorld('windTunnel', {
     setLutTable: (velocities) => ipcRenderer.invoke('calibration:setLutTable', { velocities }),
     getLut: () => ipcRenderer.invoke('calibration:getLut'),
     setLutFan: (percent) => ipcRenderer.invoke('calibration:setLutFan', { percent }),
-    calibrateDisplay: () => ipcRenderer.invoke('calibration:calibrateDisplay'),
     setNetwork: (ip0, ip1, ip2, ip3, port, dhcp) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port, dhcp }),
 
     getNetworkSettings: () => ipcRenderer.invoke('network:getSettings'),
@@ -65,6 +64,7 @@ contextBridge.exposeInMainWorld('windTunnel', {
     adminStatus: () => ipcRenderer.invoke('admin:status'),
     verifyAdmin: (password) => ipcRenderer.invoke('admin:verify', password),
     setupAdmin: (password) => ipcRenderer.invoke('admin:setup', password),
+    changeAdminPassword: (currentPassword, newPassword) => ipcRenderer.invoke('admin:changePassword', currentPassword, newPassword),
     lockAdmin: () => ipcRenderer.invoke('admin:lock'),
     getAuditLog: () => ipcRenderer.invoke('admin:getAuditLog'),
     requestElevation: () => ipcRenderer.invoke('admin:requestElevation'),

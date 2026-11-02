@@ -177,12 +177,28 @@ function publicSettings() {
     return { ...settings, relayRunning: Boolean(relayServer), addresses: localAddresses(), relayLastError: relayLastError };
 }
 
+// Adapters other PCs can't reach: VM host-only/NAT switches (the same 192.168.56.1 appears on every PC
+// running VirtualBox), Windows hotspot/ICS (192.168.137.1), link-local, WSL/Hyper-V. Matched by MAC
+// vendor prefix, address range or adapter name; they are listed last, never dropped.
+const VIRTUAL_MAC_PREFIXES = ['0a:00:27', '00:50:56', '00:0c:29', '00:05:69', '00:15:5d', '00:1c:42'];
+const VIRTUAL_ADDRESS_PREFIXES = ['192.168.56.', '192.168.137.', '169.254.', '172.17.', '172.18.'];
+const VIRTUAL_NAME_PATTERN = /virtualbox|vmware|vethernet|hyper-v|wsl|docker|vpn|tap|tun|loopback|bluetooth|local area connection\*/i;
+
+function isVirtualAdapter(name, entry) {
+    return VIRTUAL_MAC_PREFIXES.some((prefix) => String(entry.mac || '').toLowerCase().startsWith(prefix))
+        || VIRTUAL_ADDRESS_PREFIXES.some((prefix) => entry.address.startsWith(prefix))
+        || VIRTUAL_NAME_PATTERN.test(name);
+}
+
+// Real adapters first, so addresses[0] is what another PC on the LAN should use.
 function localAddresses() {
-    const found = [];
-    Object.values(os.networkInterfaces()).forEach((list) => (list || []).forEach((entry) => {
-        if (entry.family === 'IPv4' && !entry.internal) found.push(entry.address);
+    const real = [];
+    const virtual = [];
+    Object.entries(os.networkInterfaces()).forEach(([name, list]) => (list || []).forEach((entry) => {
+        if (entry.family !== 'IPv4' || entry.internal) return;
+        (isVirtualAdapter(name, entry) ? virtual : real).push(entry.address);
     }));
-    return found;
+    return [...real, ...virtual];
 }
 
 // ----- relay (master side) -------------------------------------------------------------------

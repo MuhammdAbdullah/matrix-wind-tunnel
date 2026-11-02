@@ -6,7 +6,8 @@ This independent repository contains the new Windows Electron **Wind Tunnel** ap
 
 ## Hardware and connection
 
-- Never modify the approved firmware while developing the app. The approved image is `WindTunnel V2.0.6.hex`.
+- Never modify the firmware files while developing the app. There is no approved image: the firmware is in development and **V2.0.7 is the latest** (`../Firmware/WindTunnel V2.0.7.*`).
+- Firmware file naming: the bootloader accepts any `.hex` whose name starts with `WindTunnel` (case-insensitive), with anything after it allowed. Any other name is rejected before the file is opened (`HEX_NAME_PREFIX` in `main/firmware.js`). No exact name or version is required.
 - Electron main-process code owns USB/serial access. The renderer uses only the preload bridge.
 - Auto-scan for USB VID `0x12BF`, PID `0xF010`; connect at `115200` baud, verify API version `2`, and retry after unplug/replug.
 - Production startup must show “Searching for controller…” when hardware is absent. Do not silently enter simulation. Simulation is opt-in with `npm start -- --simulate` only.

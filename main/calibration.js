@@ -2,6 +2,7 @@
 const { state, publish, appendAudit } = require('./state');
 const serial = require('./serial');
 const admin = require('./admin');
+const netinfo = require('./netinfo');
 
 function floatBuffer(value) {
     const buffer = Buffer.alloc(4);
@@ -244,29 +245,61 @@ async function setLutFan({ percent }) {
     return { ok: true, fanSpeed: target, message: `Fan set to ${target}%` };
 }
 
-// V2.0.7 firmware stores ip0-ip3, port and the dhcp flag in EEPROM and immediately re-applies them to
-// the W5500 (DHCP can block the API for ~5 s). It sends NO reply to this command, so the result is
-// reported as sent, never as acknowledged; the operator confirms by reconnecting over Ethernet.
-async function setNetwork({ ip0, ip1, ip2, ip3, port, dhcp = false }) {
+// V2.0.7 firmware stores ip0-ip3, port, the dhcp flag (and, with the access-control patch, the MAC) in EEPROM and
+// immediately re-applies them to the W5500 (DHCP can block the API for ~5 s). It sends NO reply to this command,
+// so the write itself is only ever "sent". Over USB the controller is then asked what it holds (netinfo/macinfo):
+// the result is `acknowledged` only when that read-back matches the request. Over Ethernet the link drops while
+// the controller restarts its network, so there is no read-back; the Network tab refreshes after it reconnects.
+const NETWORK_READBACK_ATTEMPTS = 4;
+const NETWORK_READBACK_FIRST_DELAY_MS = 1500;
+const NETWORK_READBACK_RETRY_DELAY_MS = 2500;
+
+async function setNetwork({ ip0, ip1, ip2, ip3, port, dhcp = false, mac = null }) {
     const blocked = guard();
     if (blocked) return { ok: false, acknowledged: false, message: blocked };
     const octets = [ip0, ip1, ip2, ip3].map(Number);
     const portNumber = Number(port);
     if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return { ok: false, acknowledged: false, message: 'Each IP address part must be a whole number from 0 to 255.' };
     if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) return { ok: false, acknowledged: false, message: 'Port must be a whole number from 1 to 65535.' };
-    const payload = Buffer.alloc(7);
+    const wantMac = mac !== null && mac !== undefined && String(mac).trim() !== '';
+    if (wantMac) {
+        const problem = netinfo.macProblem(mac);
+        if (problem) return { ok: false, acknowledged: false, message: problem };
+    }
+    const payload = Buffer.alloc(wantMac ? 13 : 7);
     octets.forEach((octet, index) => { payload[index] = octet; });
     payload.writeUInt16LE(portNumber, 4);
     payload[6] = dhcp ? 1 : 0;
-    const address = `${octets.join('.')}:${portNumber}`;
+    if (wantMac) Buffer.from(netinfo.macBytes(mac)).copy(payload, 7);
+    const address = octets.join('.');
+    const request = { ip: address, port: portNumber, dhcp: Boolean(dhcp), mac: wantMac ? netinfo.normaliseMac(mac) : null };
+    const viaEthernet = state.transport === 'ethernet';
     try {
         await serial.sendBinary(CMD.SET_NETWORK, payload, { source: 'calibrator' });
-        const summary = dhcp ? `DHCP enabled on port ${portNumber} (the static address is kept but unused)` : `static address ${address}`;
-        const viaEthernet = state.transport === 'ethernet' ? ' This Ethernet link will drop while the controller restarts its network; it reconnects automatically.' : '';
-        return { ok: true, acknowledged: false, sent: true, message: `Network settings sent: ${summary}. The controller does not reply to this command; check the touchscreen Settings page for its address.${viaEthernet}` };
     } catch (error) {
         return { ok: false, acknowledged: false, message: `Network settings were not sent: ${error.message}` };
     }
+    const summary = `${dhcp ? `DHCP enabled on port ${portNumber} (the static address ${address} is kept but unused)` : `static address ${address}:${portNumber}`}${request.mac ? `, MAC ${request.mac}` : ''}`;
+    if (viaEthernet) {
+        return { ok: true, acknowledged: false, sent: true, message: `Network settings sent: ${summary}. The controller does not reply to this command and this Ethernet link will drop while it restarts its network; the Network tab shows what it reports once the app reconnects.` };
+    }
+    // Over USB: give the controller time to re-run DHCP / apply the address, then ask it what it holds.
+    await wait(NETWORK_READBACK_FIRST_DELAY_MS);
+    let info = null;
+    for (let attempt = 0; attempt < NETWORK_READBACK_ATTEMPTS; attempt += 1) {
+        info = await netinfo.readControllerInfo({ source: 'calibrator' });
+        if (info.supported && netinfo.matchesRequest(info, request)) {
+            return { ok: true, acknowledged: true, sent: true, controller: info, message: `Network settings confirmed by the controller: ${summary}. It now reports ${info.ip}:${info.port}, MAC ${info.mac}.` };
+        }
+        if (!info.ok && info.reason === 'link') break;
+        if (info.ok && !info.supported) break;
+        if (attempt < NETWORK_READBACK_ATTEMPTS - 1) await wait(NETWORK_READBACK_RETRY_DELAY_MS);
+    }
+    if (info && info.ok && !info.supported) {
+        return { ok: true, acknowledged: false, sent: true, message: `Network settings sent: ${summary}. This firmware cannot report its network settings back, so they are not confirmed; check the touchscreen Settings page.` };
+    }
+    const reported = info && info.supported && info.ip ? ` The controller reports ${info.dhcp ? 'DHCP' : 'static'} ${info.ip}:${info.port}, MAC ${info.mac}.` : '';
+    return { ok: true, acknowledged: false, sent: true, controller: info && info.supported && info.ip ? info : undefined, message: `Network settings sent: ${summary}, but the controller has not confirmed them yet.${reported} Press Refresh to re-read it.` };
 }
 
 module.exports = { setScaler, getScalers, setLutTable, getLut, setLutFan, setNetwork };

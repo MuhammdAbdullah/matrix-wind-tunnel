@@ -219,3 +219,17 @@ html, body { height: 100%; overflow: hidden; }
 @media (max-width: 640px) {
     .metrics { grid-template-columns: 1fr; }
 }
+
+/* ---- Admin > Network: plain-language status banner + collapsible advanced sections ---- */
+.net-hero { margin-bottom: 16px; border-left: 6px solid oklch(var(--bc) / 0.3); }
+.net-hero[data-tone="success"] { border-left-color: oklch(var(--su)); }
+.net-hero[data-tone="warning"] { border-left-color: oklch(var(--wa)); }
+.net-hero[data-tone="error"] { border-left-color: oklch(var(--er)); }
+.net-hero-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.net-hero-text { min-width: 0; flex: 1 1 18em; }
+.net-hero-title { font-size: 1.15rem; font-weight: 700; margin: 0; }
+.net-advanced > summary, .net-section > summary { cursor: pointer; font-size: 13px; font-weight: 600; opacity: 0.85; }
+.net-advanced > summary:hover, .net-section > summary:hover { opacity: 1; }
+.net-section { margin-bottom: 16px; }
+.net-section > summary { padding: 14px 20px; }
+@media (max-width: 800px) { .net-section .admin-grid { grid-template-columns: minmax(0, 1fr); } }

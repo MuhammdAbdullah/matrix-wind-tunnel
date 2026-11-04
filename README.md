@@ -116,8 +116,8 @@ The V2.0.7 controller serves its JSON API over a **WebSocket** on port `1245` (o
 
 **Setting it up (Admin > Network).**
 
-1. *Controller Network Settings*: DHCP on/off, static IP and port, then **Send To Controller** (needs a connected controller, Admin unlocked and no sweep running). The controller sends no reply to this command, so it is reported as *sent*, not acknowledged; the IP cannot be read back.
-2. *Connect To Controller Over Ethernet*: tick the option, enter the controller's address and port (default `1245`) or use **Scan Network** (finds controllers on this PC's local /24 subnets) and press **Save**. Use a switch/router with DHCP, or give the controller a static IP in the PC's subnet first.
+1. *Controller Network*: shows the controller's own **IP, port, DHCP mode and MAC address** (read from it; needs controller firmware with the access-control patch, otherwise it says "Not reported by this firmware"). Below that you can change DHCP / static IP / port / **MAC** and press **Send To Controller** (needs a connected controller, Admin unlocked and no sweep running; asks for confirmation). The controller sends no reply to this command; over USB the app reads the settings back and only calls them confirmed when they match. Ethernet access: see [Ethernet access control](#ethernet-access-control).
+2. *Connect over the network*: read the controller's **IP address** on its touchscreen (Settings page), type it in and press **Connect**. Port (default `1245`), the on/off tick and **Find Controller Automatically** (scans this PC's local /24 subnets) are under *Advanced*. Use a switch/router with DHCP, or give the controller a static IP in the PC's subnet first.
 3. *Remote Access (this PC is the master)*: choose who may connect — **Not connect**, **View live data only**, or **View and control** — set the port (default `8090`) and Save. An **access code** (`XXXX-XXXX`) is generated fresh on every app launch (never saved to disk, so it must be copied again after a restart); **New code** replaces it immediately and disconnects everyone. The browser address (`http://<this PC>:8090`) is shown; addresses of real network adapters are listed first and virtual ones (VirtualBox/VMware/Hyper-V/WSL/Docker, Windows hotspot, link-local) last, so the first address is the one other PCs on the LAN should use. A **Give other PCs** line shows the address, port and code together (`192.168.1.20:8090 ABCD-EFGH`) with a **Copy** button. Connected devices are listed with their command counts.
 4. *Connect To A Master PC*: on another PC, pick a master from **Masters found on this network** (or type its address), enter the access code and press **Connect**. Pasting the master's copied `address:port CODE` line into **Master address** fills the address, port and code in one go. This app then mirrors the master and stops using its own USB/Ethernet link; **Disconnect** returns to local scanning. The code is not saved, so it is asked for again each session.
 
@@ -134,6 +134,11 @@ The V2.0.7 controller serves its JSON API over a **WebSocket** on port `1245` (o
 - If a client disappears **without a proper WebSocket close** (process killed, Ctrl-C), the controller refuses all new connections (`ECONNREFUSED`) for about 23 seconds. The app always closes politely (including on quit), and keeps retrying, so after a crash the connection returns by itself. Quit with the window's close button, not Ctrl-C.
 - Masters announce themselves with a UDP broadcast (port `8091`, no secrets), so discovery only works on the same subnet; across a VPN enter the master's address by hand. Windows Firewall may ask to allow the app on private networks the first time.
 - If the master loses its link, the controller keeps its last fan speed; remote devices cannot stop it from afar.
+
+
+### Ethernet access control
+
+Needs controller firmware with the access-control patch (see [docs/ethernet-access-control.md](docs/ethernet-access-control.md); not yet verified on hardware). **USB always wins and needs no handshake**: while a USB host is talking to the controller it refuses and drops Ethernet clients. Over Ethernet the app opens with a short handshake (app *Hi* -> controller *Hey*, app *COM* -> controller *OK*) and the controller drops any client that does not complete it, then asks the network for a fresh address (so read the IP on the touchscreen again if the connection stops working). There is nothing to set up: the operator just types the IP shown on the controller. This keeps out accidental and casual clients; the handshake words are fixed and documented, so it is not strong security. `npm run test:netauth` exercises the app side against a mock controller (`tools/mock-controller.js`).
 
 ## Experiments
 
@@ -214,7 +219,7 @@ Exposed by `preload.js`. All methods return a Promise (the `on*` listeners regis
 | `getLut()` | `calibration:getLut` | Ten velocities (fan 10 %…100 %). |
 | `setLutTable(velocities)` | `calibration:setLutTable` | Array of 10 velocities in m/s (fan 10 %…100 %, each 0–100). Writes all ten entries, then does ONE read-back; `acknowledged` is true only when every entry reads back within 0.011 m/s. |
 | `setLutFan(percent)` | `calibration:setLutFan` | Fan step (0–100) for the pressure capture. Admin-gated except for 0 % (stop). |
-| `setNetwork(ip0, ip1, ip2, ip3, port, dhcp)` | `calibration:setNetwork` | Store IP, port and the DHCP flag on the controller (V2.0.7). The controller sends no reply, so the result is `{ ok, acknowledged: false, sent: true, message }`. |
+| `setNetwork(ip0, ip1, ip2, ip3, port, dhcp, mac?)` | `calibration:setNetwork` | Store IP, port, the DHCP flag and optionally the MAC on the controller. The controller sends no reply, so the write is `sent`; over USB the app reads netinfo/macinfo back and sets `acknowledged: true` only if they match. |
 
 **Admin and firmware**
 
@@ -253,6 +258,7 @@ Every firmware call returns `{ ok, stage, message, … }`; a locked Admin sessio
 | `scanNetwork(port)` | `network:scan` | Probe this PC's /24 subnets for controllers → `{ devices: [{ host, port, apiVersion }] }`. |
 | `connectRemote(host, port, code)` | `network:connectRemote` | Become a remote client of another PC's relay. |
 | `disconnectRemote()` | `network:disconnectRemote` | Leave remote mode and resume local scanning. |
+| `readControllerInfo()` | `network:readControllerInfo` | Ask the controller for its live IP, port, DHCP and MAC; result also lands in `state.network.controller`. |
 
 `disconnect()` also ends a remote session. In remote mode `setFanSpeed`, `setAngle`, `setLeds`, `zeroSensors`, `zeroMotor` and `stopSweep` are forwarded to the master; sweeps, logging and calibration return a refusal.
 

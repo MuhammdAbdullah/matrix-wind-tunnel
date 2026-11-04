@@ -235,6 +235,11 @@ async function loadExperiments(selectedId) {
     applyExperiment(experiment);
 }
 
+// Admin -> Network: the last pushed state (for the controller card and Apply) and whether the edit fields hold unsent input.
+let lastNetworkValue = null;
+let networkFieldsDirty = false;
+let shownControllerReadAt = null;
+
 // Admin -> Bootloader: Trigger Bootloader is only usable while the application link is up. After a
 // successful trigger it stays grey until the link has dropped and come back (see noteHardwareState()).
 let hardwareOnline = false;
@@ -958,7 +963,62 @@ function setPill(id, text, tone) {
     $(id).className = `badge badge-${tone}`;
 }
 
+// One plain sentence about how this PC reaches the controller, plus the single next step if there is one.
+// `action.target` is the id of the control that fixes it; the banner button opens its section and focuses it.
+let netHeroAction = null;
+let lastBlockedLogged = null;
+
+function describeNetworkState(value) {
+    const net = value.network || {};
+    const info = net.controller && net.controller.supported ? net.controller : null;
+    const where = info ? `Controller address ${info.ip} · port ${info.port} · MAC ${info.mac}` : '';
+    const blocked = net.ethernetBlocked;
+    const usb = value.transport === 'usb';
+    if (value.simulation) return { tone: 'neutral', title: 'Simulation mode', detail: 'No real controller is connected; values are synthetic.' };
+    if (value.transport === 'remote') {
+        return value.connected
+            ? { tone: 'success', title: 'Following another PC', detail: 'This app mirrors the PC that has the tunnel connected.' }
+            : { tone: 'warning', title: 'Reconnecting to the other PC...', detail: 'The PC that has the tunnel is not answering right now.' };
+    }
+    if (value.connected && usb) {
+        return { tone: 'success', title: 'Connected by USB cable', detail: where || 'USB is the most reliable link and takes priority over the network.' };
+    }
+    if (value.connected) return { tone: 'success', title: 'Connected over the network', detail: where || 'Using the network because no USB cable is plugged in.' };
+    if (blocked && blocked.code === 'USB_IN_CONTROL') {
+        return { tone: 'warning', title: 'Network paused: the controller is in use over USB', detail: 'Another app (here or on another PC) has the USB cable. This PC connects by itself when it is released.' };
+    }
+    if (blocked && (blocked.code === 'AUTH_FAILED' || blocked.code === 'AUTH_TIMEOUT')) {
+        return { tone: 'error', title: 'The controller did not accept the connection', detail: 'It may still be closing the previous session; the app keeps retrying. If this stays, the controller may have a new IP address: read it on its touchscreen and enter it below.', action: { label: 'Enter IP address', target: 'ethHost' } };
+    }
+    if (value.connecting) return { tone: 'warning', title: 'Connecting...', detail: 'Checking the controller.' };
+    const networkOn = $('ethEnabled').checked;
+    if (!networkOn) return { tone: 'neutral', title: 'Not connected', detail: "Plug in the USB cable, or type the IP address from the controller's touchscreen below and press Connect.", action: { label: 'Enter IP address', target: 'ethHost' } };
+    return { tone: 'neutral', title: 'Looking for the controller...', detail: "Plug in the USB cable, or check the IP address against the controller's touchscreen." };
+}
+
+function renderNetHero(value) {
+    const state = describeNetworkState(value);
+    $('netHero').dataset.tone = state.tone;
+    $('netHeroTitle').textContent = state.title;
+    $('netHeroDetail').textContent = state.detail;
+    netHeroAction = state.action || null;
+    $('netHeroAction').classList.toggle('hidden', !netHeroAction);
+    if (netHeroAction) $('netHeroAction').textContent = netHeroAction.label;
+}
+
+$('netHeroAction').addEventListener('click', () => {
+    if (!netHeroAction) return;
+    const target = $(netHeroAction.target);
+    const section = target.closest('details');
+    if (section) section.open = true;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.focus({ preventScroll: true });
+});
+
 function renderNetworkStatus(value) {
+    lastNetworkValue = value;
+    renderControllerNetwork(value);
+    renderNetHero(value);
     const net = value.network || {};
     const relay = net.relay || {};
     const remote = net.remote || {};
@@ -968,7 +1028,7 @@ function renderNetworkStatus(value) {
         const via = remote.hardwareTransport ? ` · tunnel on ${remote.hardwareTransport === 'ethernet' ? 'Ethernet' : 'USB'}` : '';
         setPill('netLinkPill', `Remote${via}`, value.connected ? 'success' : 'warning');
     } else {
-        setPill('netLinkPill', value.connected ? (TRANSPORT_LABELS[value.transport] || 'Connected') : 'Offline', value.connected ? 'success' : 'neutral');
+        setPill('netLinkPill', value.connected ? ({ usb: 'USB', ethernet: 'Network' }[value.transport] || 'Connected') : 'Offline', value.connected ? 'success' : 'neutral');
     }
     setPill('relayPill', relay.running ? modeText : relay.mode && relay.mode !== 'off' ? 'Not listening' : 'Off', relay.running ? 'success' : relay.mode && relay.mode !== 'off' ? 'warning' : 'neutral');
     setPill('remotePill', value.transport === 'remote' ? (value.connected ? (value.remoteAccess === 'control' ? 'Connected · control' : 'Connected · view only') : 'Reconnecting') : 'Not connected', value.transport === 'remote' && value.connected ? 'success' : value.transport === 'remote' ? 'warning' : 'neutral');
@@ -983,6 +1043,10 @@ function renderNetworkStatus(value) {
 
     const yielded = net.ethernetYield;
     $('ethYield').classList.toggle('hidden', !yielded);
+    const blocked = net.ethernetBlocked;
+    // The status banner (describeNetworkState) explains a refusal in plain words; the raw message goes to the log only.
+    $('ethBlocked').classList.add('hidden');
+    if (blocked && blocked.at !== lastBlockedLogged) { lastBlockedLogged = blocked.at; log(blocked.message, 'error'); }
     if (yielded) $('ethYield').textContent = `Ethernet released: ${yielded.name} (${yielded.host}) has the controller over USB. Connect to it as a remote device below.`;
     const found = net.discovered || [];
     const foundList = $('discoveredMasters');
@@ -1044,34 +1108,149 @@ async function refreshNetworkSettings() {
     setIfIdle('remotePort', result.remote.port);
     $('relayUrls').textContent = result.addresses.length ? result.addresses.map((address) => `http://${address}:${result.relay.port}`).join('   ') : 'no network adapter found';
     if (result.relayLastError) $('relayAck').textContent = result.relayLastError;
+    if (lastNetworkValue && lastNetworkValue.connected && !(lastNetworkValue.network || {}).controller) refreshControllerInfo();
+}
+
+// ----- controller network identity ----------------------------------------------------
+
+const MAC_PATTERN = /^[0-9a-fA-F]{2}([:-][0-9a-fA-F]{2}){5}$/;
+
+function macProblem(text) {
+    if (!MAC_PATTERN.test(text)) return 'Enter the MAC address as six hex pairs, for example 00:08:DC:12:34:56.';
+    if (parseInt(text.slice(0, 2), 16) & 1) return 'The first byte of a device MAC address must be even (an odd first byte means multicast).';
+    if (/^[0:-]+$/.test(text)) return 'A MAC address of all zeros is not valid.';
+    return null;
 }
 
 function syncDhcpFields() {
     $('networkIp').disabled = $('networkDhcp').checked;
 }
 $('networkDhcp').addEventListener('change', syncDhcpFields);
+['networkDhcp', 'networkIp', 'networkPort', 'networkMac'].forEach((id) => $(id).addEventListener('input', () => { networkFieldsDirty = true; }));
+$('networkDhcp').addEventListener('change', () => { networkFieldsDirty = true; });
 syncDhcpFields();
+
+// Everything shown comes from the controller's own netinfo/macinfo reply, never from what was last typed.
+function renderControllerNetwork(value) {
+    const info = (value.network || {}).controller;
+    let note = '';
+    if (value.transport === 'remote') note = "This PC follows a master PC; read the controller's network settings on that PC.";
+    else if (!value.connected) note = 'Connect to the controller to read its network settings.';
+    else if (!info) note = "Reading the controller's network settings...";
+    else if (!info.supported) note = "Not reported by this firmware. The address is on the controller's touchscreen Settings page.";
+    const usable = Boolean(value.connected && value.transport !== 'remote' && info && info.supported);
+    if (!usable) {
+        ['ctlIp', 'ctlPort', 'ctlDhcp', 'ctlStaticIp', 'ctlMac', 'adminControllerNet'].forEach((id) => { $(id).textContent = '-'; });
+        $('ctlNote').textContent = note;
+    } else {
+        $('ctlIp').textContent = info.ip;
+        $('ctlPort').textContent = info.port;
+        $('ctlDhcp').textContent = info.dhcp ? 'Automatic (DHCP)' : 'Static';
+        $('ctlStaticIp').textContent = info.staticIp;
+        $('ctlMac').textContent = info.mac;
+        $('ctlNote').textContent = `Read from the controller at ${new Date(info.readAt).toLocaleTimeString()}${info.simulated ? ' (simulated values)' : ''}.`;
+        $('adminControllerNet').textContent = `${info.ip} · port ${info.port} · ${info.mac}`;
+        // Fill the edit fields from the controller once per reading, never over something the operator is typing.
+        const editing = ['networkIp', 'networkPort', 'networkMac'].includes(document.activeElement && document.activeElement.id);
+        if (info.readAt !== shownControllerReadAt && !networkFieldsDirty && !editing) {
+            $('networkDhcp').checked = info.dhcp;
+            $('networkIp').value = info.staticIp;
+            $('networkPort').value = info.port;
+            $('networkMac').value = info.mac;
+            syncDhcpFields();
+        }
+        shownControllerReadAt = info.readAt;
+    }
+}
+
+async function refreshControllerInfo() {
+    $('refreshControllerInfo').disabled = true;
+    const result = await window.windTunnel.readControllerInfo();
+    $('refreshControllerInfo').disabled = false;
+    if (result && result.ok === false && result.message) $('ctlNote').textContent = result.message;
+}
+$('refreshControllerInfo').addEventListener('click', refreshControllerInfo);
 
 $('saveNetwork').addEventListener('click', async () => {
     const parts = $('networkIp').value.trim().split('.');
     const octets = parts.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : NaN));
     const dhcp = $('networkDhcp').checked;
+    const port = Number($('networkPort').value);
     if (!dhcp && (octets.length !== 4 || octets.some((octet) => !(octet >= 0 && octet <= 255)))) {
         $('networkAck').textContent = 'Enter the static IP as four numbers from 0 to 255, for example 192.168.1.150.';
         return;
     }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        $('networkAck').textContent = 'Port must be a whole number from 1 to 65535.';
+        return;
+    }
+    const info = ((lastNetworkValue || {}).network || {}).controller;
+    const macText = $('networkMac').value.trim();
+    let mac;
+    if (macText) {
+        const problem = macProblem(macText);
+        if (problem) { $('networkAck').textContent = problem; return; }
+        // Only a MAC that differs from the reported one is sent, so an unchanged field never rewrites it.
+        const reported = info && info.supported && info.mac ? info.mac.toUpperCase() : '';
+        if (reported !== macText.replace(/-/g, ':').toUpperCase()) mac = macText;
+    }
     const [ip0, ip1, ip2, ip3] = octets.length === 4 ? octets : [192, 168, 1, 150];
-    const result = await window.windTunnel.setNetwork(ip0, ip1, ip2, ip3, Number($('networkPort').value), dhcp);
+    const lines = [dhcp ? `Obtain the address by DHCP, port ${port}.` : `Static address ${ip0}.${ip1}.${ip2}.${ip3}, port ${port}.`];
+    if (mac) lines.push(`MAC address ${mac.replace(/-/g, ':').toUpperCase()}. A new MAC is a new identity for the router's DHCP, so the controller may get a different address.`);
+    if (lastNetworkValue && lastNetworkValue.transport === 'ethernet') lines.push('You are connected over Ethernet: this link will drop while the controller restarts its network, then the app reconnects.');
+    lines.push('The controller applies this immediately and may be unresponsive for several seconds. Continue?');
+    if (!window.confirm(lines.join('\n\n'))) return;
+    $('saveNetwork').disabled = true;
+    $('networkAck').textContent = 'Sending to the controller and reading it back...';
+    const result = await window.windTunnel.setNetwork(ip0, ip1, ip2, ip3, port, dhcp, mac);
+    $('saveNetwork').disabled = false;
     $('networkAck').textContent = result.message;
-    if (result.ok && !dhcp) { $('ethHost').value = `${ip0}.${ip1}.${ip2}.${ip3}`; $('ethPort').value = $('networkPort').value; }
+    if (result.acknowledged) networkFieldsDirty = false;
+    if (result.ok && !dhcp) { $('ethHost').value = `${ip0}.${ip1}.${ip2}.${ip3}`; $('ethPort').value = port; }
     log(result.message, result.ok ? 'info' : 'error');
 });
 
-$('saveEthernet').addEventListener('click', async () => {
-    const result = await window.windTunnel.saveEthernetSettings({ enabled: $('ethEnabled').checked, host: $('ethHost').value, port: Number($('ethPort').value) });
-    $('ethAck').textContent = result.message;
+// "Connect": saves the IP typed from the controller's touchscreen and switches network use on.
+const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+async function saveEthernetFromForm(enabled) {
+    const host = $('ethHost').value.trim();
+    const result = await window.windTunnel.saveEthernetSettings({ enabled, host, port: Number($('ethPort').value) });
     log(result.message, result.ok ? 'info' : 'error');
+    return result;
+}
+
+$('saveEthernet').addEventListener('click', async () => {
+    const host = $('ethHost').value.trim();
+    const octets = host.match(IPV4_PATTERN);
+    if (!host) { $('ethAck').textContent = "Type the IP address shown on the controller's touchscreen first."; $('ethHost').focus(); return; }
+    if (octets && octets.slice(1).some((octet) => Number(octet) > 255)) { $('ethAck').textContent = 'An IP address is four numbers from 0 to 255, for example 192.168.1.150.'; $('ethHost').focus(); return; }
+    $('ethEnabled').checked = true;
+    $('saveEthernet').disabled = true;
+    const result = await saveEthernetFromForm(true);
+    $('saveEthernet').disabled = false;
+    $('ethAck').textContent = result.ok ? `Connecting to ${host}... If nothing happens, check that address on the controller's touchscreen: it can change after the controller drops an unknown device.` : result.message;
+    if (lastNetworkValue) renderNetHero(lastNetworkValue);
 });
+
+$('ethEnabled').addEventListener('change', async () => {
+    const enabled = $('ethEnabled').checked;
+    if (lastNetworkValue) renderNetHero(lastNetworkValue);
+    const result = await saveEthernetFromForm(enabled);
+    if (!result.ok) { $('ethEnabled').checked = !enabled; $('ethAck').textContent = result.message; }
+    if (lastNetworkValue) renderNetHero(lastNetworkValue);
+});
+
+// One click from "found" to "saved and connecting": fill in the address, switch network use on and save.
+async function useFoundController(device) {
+    $('ethHost').value = device.host;
+    $('ethPort').value = device.port;
+    $('ethEnabled').checked = true;
+    const result = await window.windTunnel.saveEthernetSettings({ enabled: true, host: device.host, port: Number(device.port) });
+    $('ethAck').textContent = result.ok ? `Found the controller at ${device.host} and saved it. This PC will use the network whenever the USB cable is not plugged in.` : result.message;
+    log(result.message, result.ok ? 'info' : 'error');
+    if (lastNetworkValue) renderNetHero(lastNetworkValue);
+}
 
 $('scanNetwork').addEventListener('click', async () => {
     const button = $('scanNetwork');
@@ -1084,13 +1263,20 @@ $('scanNetwork').addEventListener('click', async () => {
         $('scanResults').textContent = `No controller answered on port ${$('ethPort').value} (${result.subnets.join(', ')}). The controller serves one client at a time, so one already connected will not answer.`;
         return;
     }
+    const usable = result.devices.filter((device) => !device.locked);
+    if (usable.length === 1 && result.devices.length === 1) await useFoundController(usable[0]);
     $('scanResults').replaceChildren(...result.devices.map((device) => {
         const row = document.createElement('div');
         const use = document.createElement('button');
         use.className = 'btn btn-xs btn-outline mr-2';
         use.textContent = 'Use';
-        use.addEventListener('click', () => { $('ethHost').value = device.host; $('ethPort').value = device.port; $('ethEnabled').checked = true; });
-        row.append(use, document.createTextNode(`${device.host}:${device.port} · API v${device.apiVersion}`));
+        use.addEventListener('click', () => useFoundController(device));
+        const lockedText = {
+            'usb-in-control': 'a controller under USB control',
+            refused: 'something on this port that did not accept this PC',
+            timeout: 'a controller that did not finish the handshake'
+        }[device.locked];
+        row.append(use, document.createTextNode(device.locked ? `${device.host}:${device.port} · ${lockedText || 'a controller that refused this PC'}` : `${device.host}:${device.port} · API v${device.apiVersion}`));
         return row;
     }));
 });

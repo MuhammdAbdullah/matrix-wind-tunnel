@@ -12,6 +12,7 @@ const logging = require('./main/logging');
 const updater = require('./main/updater');
 const control = require('./main/control');
 const network = require('./main/network');
+const netinfo = require('./main/netinfo');
 
 let mainWindow;
 
@@ -184,7 +185,7 @@ ipcMain.handle('calibration:getScalers', () => calibration.getScalers());
 ipcMain.handle('calibration:setLutTable', (_event, payload) => calibration.setLutTable(payload));
 ipcMain.handle('calibration:getLut', () => calibration.getLut());
 ipcMain.handle('calibration:setLutFan', (_event, payload) => calibration.setLutFan(payload));
-ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload));
+ipcMain.handle('calibration:setNetwork', (_event, payload) => calibration.setNetwork(payload || {}));
 
 // Network settings are Admin-only and re-checked here, not just in the renderer.
 const adminOnly = (handler) => (...args) => (admin.isUnlocked() ? handler(...args) : { ok: false, message: 'Admin session is locked.' });
@@ -195,6 +196,8 @@ ipcMain.handle('network:regenerateCode', adminOnly(() => network.regenerateAcces
 ipcMain.handle('network:scan', adminOnly((_event, port) => network.scanNetwork(port)));
 ipcMain.handle('network:connectRemote', adminOnly((_event, payload) => network.connectRemote(payload || {})));
 ipcMain.handle('network:disconnectRemote', adminOnly(() => network.disconnectRemote()));
+// Controller network identity (docs/ethernet-access-control.md).
+ipcMain.handle('network:readControllerInfo', adminOnly(() => netinfo.readControllerInfo()));
 
 ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.LATEST_FIRMWARE_VERSION }));
 ipcMain.handle('admin:bootloaderPickHex', async () => {

@@ -231,6 +231,7 @@
                                 <dt>Retries</dt><dd id="adminRetries">0</dd>
                                 <dt>Errors</dt><dd id="adminErrors">0</dd>
                                 <dt>Remote access</dt><dd id="adminRemoteAccess">Off</dd>
+                                <dt>Controller network</dt><dd id="adminControllerNet">-</dd>
                             </dl>
                             <div class="flex gap-2 mt-2">
                                 <button class="btn btn-secondary btn-sm" id="refreshDiagnostics">Refresh Diagnostics</button>
@@ -297,88 +298,117 @@
 
             <!-- NETWORK TAB -->
             <div id="networkTab" class="tab-content">
-                <div class="section-intro">
-                    <p>USB is always the master link. Ethernet is used only when no USB controller is connected. Other devices can watch (and, if you allow it, control) through this PC, which is the only place view-only access can be enforced because the controller itself has no concept of users.</p>
-                </div>
-                <div class="admin-grid">
-                    <article class="card bg-base-200 border border-base-300">
-                        <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Controller Network Settings</h2><span id="netLinkPill" class="badge badge-neutral">Offline</span></div>
-                            <p class="text-xs opacity-70">Written to the controller (V2.0.7). Needs a connected controller, Admin unlocked and no sweep running. The controller sends no reply to this command, so it is reported as sent, not acknowledged.</p>
-                            <label class="flex items-center gap-2 mt-2"><input type="checkbox" id="networkDhcp" class="checkbox checkbox-sm" checked> Obtain the address automatically (DHCP)</label>
-                            <div class="split mt-2">
-                                <label>Static IP<input id="networkIp" class="input input-bordered input-sm w-full" value="192.168.1.150"></label>
-                                <label>Port<input id="networkPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
+                <article id="netHero" class="card bg-base-200 border border-base-300 net-hero" data-tone="neutral">
+                    <div class="card-body">
+                        <div class="net-hero-row">
+                            <div class="net-hero-text">
+                                <h2 id="netHeroTitle" class="net-hero-title">Looking for the controller...</h2>
+                                <p id="netHeroDetail" class="text-sm opacity-70">Plug in the USB cable, or turn on the network connection below.</p>
                             </div>
-                            <button id="saveNetwork" class="btn btn-primary btn-sm mt-2">Send To Controller</button>
-                            <p id="networkAck" class="text-xs opacity-60 mt-2">Controller defaults: DHCP on, port 1245. With DHCP the address is shown on the controller's touchscreen (Settings page); it cannot be read back over the API.</p>
+                            <div class="button-row">
+                                <span id="netLinkPill" class="badge badge-neutral">Offline</span>
+                                <button id="netHeroAction" class="btn btn-primary btn-sm hidden" type="button"></button>
+                            </div>
                         </div>
-                    </article>
+                    </div>
+                </article>
 
-                    <article class="card bg-base-200 border border-base-300">
-                        <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Connect To Controller Over Ethernet</h2></div>
-                            <label class="flex items-center gap-2"><input type="checkbox" id="ethEnabled" class="checkbox checkbox-sm"> Connect over Ethernet when no USB controller is present</label>
-                            <div class="split mt-2">
-                                <label>Controller address<input id="ethHost" class="input input-bordered input-sm w-full" placeholder="e.g. 192.168.1.150"></label>
-                                <label>Port<input id="ethPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
-                            </div>
+                <article class="card bg-base-200 border border-base-300">
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">Connect over the network</h2></div>
+                        <p class="text-sm opacity-80">No USB cable? Read the <strong>IP address</strong> on the controller's touchscreen (Settings page), type it here and press Connect. USB always takes priority.</p>
+                        <label class="mt-2">Controller IP address<input id="ethHost" class="input input-bordered w-full" placeholder="e.g. 192.168.1.150" inputmode="decimal" autocomplete="off" spellcheck="false"></label>
+                        <div class="button-row mt-2">
+                            <button id="saveEthernet" class="btn btn-primary">Connect</button>
+                        </div>
+                        <p id="ethBlocked" class="text-xs mt-2 hidden" style="color: var(--color-warning, #e6a23c)"></p>
+                        <p id="ethYield" class="text-xs mt-2 hidden" style="color: var(--color-warning, #e6a23c)"></p>
+                        <p id="ethAck" class="text-xs opacity-70 mt-2">Only the Wind Tunnel app is accepted. The controller drops any other program that tries to connect and may then change its address, so check the touchscreen again if the connection stops working.</p>
+                        <details class="net-advanced mt-2">
+                            <summary>Advanced</summary>
+                            <label class="flex items-center gap-2 mt-2"><input type="checkbox" id="ethEnabled" class="checkbox checkbox-sm"> Use the network when there is no USB cable (untick to stop)</label>
+                            <label class="mt-2">Port<input id="ethPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
                             <div class="button-row mt-2">
-                                <button id="saveEthernet" class="btn btn-primary btn-sm">Save</button>
-                                <button id="scanNetwork" class="btn btn-secondary btn-sm">Scan Network</button>
+                                <button id="scanNetwork" class="btn btn-secondary btn-sm">Find Controller Automatically</button>
                             </div>
-                            <p id="ethAck" class="text-xs opacity-60 mt-2">The controller serves one Ethernet client at a time, so the first app to connect becomes the master and everyone else connects to it. If USB is plugged in (here or on another PC on this network), USB takes over.</p>
-                            <p id="ethYield" class="text-xs mt-2 hidden" style="color: var(--color-warning, #e6a23c)"></p>
                             <div id="scanResults" class="log mt-2"></div>
-                        </div>
-                    </article>
+                            <p class="text-xs opacity-60 mt-2">The controller serves one network client at a time. If another PC already has it, connect to that PC instead (see Sharing below).</p>
+                        </details>
+                    </div>
+                </article>
 
-                    <article class="card bg-base-200 border border-base-300">
-                        <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Remote Access (this PC is the master)</h2><span id="relayPill" class="badge badge-neutral">Off</span></div>
-                            <div class="split">
-                                <label>Other devices may
-                                    <select id="relayMode" class="select select-bordered select-sm w-full">
-                                        <option value="off">Not connect</option>
-                                        <option value="view">View live data only</option>
-                                        <option value="control">View and control</option>
-                                    </select>
-                                </label>
-                                <label>Port<input id="relayPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
-                            </div>
-                            <div class="mt-2 text-sm">Access code <strong id="relayCode" class="font-mono">----</strong>
-                                <button id="regenCode" class="btn btn-ghost btn-xs">New code</button>
-                            </div>
-                            <div class="mt-2 text-sm">Give other PCs <strong id="relayShare" class="font-mono">-</strong>
-                                <button id="copyShare" class="btn btn-ghost btn-xs">Copy</button>
-                            </div>
-                            <div class="button-row mt-2"><button id="saveRelay" class="btn btn-primary btn-sm">Save</button></div>
-                            <p id="relayAck" class="text-xs opacity-60 mt-2">Sweeps, logging, calibration, firmware and Admin always stay on this PC. Traffic is not encrypted: use this on a trusted network.</p>
-                            <p class="text-xs mt-2">Browser address: <span id="relayUrls" class="font-mono">-</span></p>
-                            <div class="text-xs font-bold mt-2">Connected devices</div>
-                            <div id="relayClients" class="log"></div>
+                <details class="net-section card bg-base-200 border border-base-300">
+                    <summary>Controller address, port and MAC (advanced)</summary>
+                    <div class="card-body">
+                        <div class="panel-heading"><h2 class="card-title text-base">What the controller reports</h2><button id="refreshControllerInfo" class="btn btn-ghost btn-xs">Refresh</button></div>
+                        <dl class="details">
+                            <dt>IP address</dt><dd id="ctlIp" class="font-mono">-</dd>
+                            <dt>Port</dt><dd id="ctlPort" class="font-mono">-</dd>
+                            <dt>Address mode</dt><dd id="ctlDhcp">-</dd>
+                            <dt>Static IP</dt><dd id="ctlStaticIp" class="font-mono">-</dd>
+                            <dt>MAC address</dt><dd id="ctlMac" class="font-mono">-</dd>
+                        </dl>
+                        <p id="ctlNote" class="text-xs opacity-60 mt-2">Connect to the controller to read its network settings.</p>
+                        <div class="text-xs font-bold mt-3">Change</div>
+                        <p class="text-xs opacity-70">Most networks need no changes: leave "automatic" ticked. Changing needs a connected controller, Admin unlocked and no sweep running.</p>
+                        <label class="flex items-center gap-2 mt-2"><input type="checkbox" id="networkDhcp" class="checkbox checkbox-sm" checked> Get the address automatically (recommended)</label>
+                        <div class="split mt-2">
+                            <label>Fixed IP address<input id="networkIp" class="input input-bordered input-sm w-full" value="192.168.1.150"></label>
+                            <label>Port<input id="networkPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="1245"></label>
                         </div>
-                    </article>
+                        <label class="mt-2">MAC address<input id="networkMac" class="input input-bordered input-sm w-full font-mono" placeholder="00:08:DC:00:00:00" autocomplete="off" spellcheck="false"></label>
+                        <button id="saveNetwork" class="btn btn-primary btn-sm mt-2">Send To Controller</button>
+                        <p id="networkAck" class="text-xs opacity-60 mt-2">Every controller ships with the same MAC address. If you have more than one on a network, give each its own.</p>
+                    </div>
+                </details>
 
-                    <article class="card bg-base-200 border border-base-300">
-                        <div class="card-body">
-                            <div class="panel-heading"><h2 class="card-title text-base">Connect To A Master PC</h2><span id="remotePill" class="badge badge-neutral">Not connected</span></div>
-                            <p class="text-xs opacity-70">Use this when the tunnel is attached to another PC. This app then mirrors that PC and stops using its own USB/Ethernet link.</p>
-                            <div class="text-xs font-bold mt-2">Masters found on this network</div>
-                            <div id="discoveredMasters" class="log"></div>
-                            <div class="split mt-2">
-                                <label>Master address<input id="remoteHost" class="input input-bordered input-sm w-full" placeholder="e.g. 192.168.1.20"></label>
-                                <label>Port<input id="remotePort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
+                <details class="net-section card bg-base-200 border border-base-300">
+                    <summary>Sharing with other PCs (optional)</summary>
+                    <div class="card-body">
+                        <div class="admin-grid">
+                            <div>
+                                <div class="panel-heading"><h2 class="card-title text-base">Let other PCs use this PC's connection</h2><span id="relayPill" class="badge badge-neutral">Off</span></div>
+                                <div class="split mt-2">
+                                    <label>Other PCs may
+                                        <select id="relayMode" class="select select-bordered select-sm w-full">
+                                            <option value="off">Not connect</option>
+                                            <option value="view">View live data only</option>
+                                            <option value="control">View and control</option>
+                                        </select>
+                                    </label>
+                                    <label>Port<input id="relayPort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
+                                </div>
+                                <div class="mt-2 text-sm">Access code <strong id="relayCode" class="font-mono">----</strong>
+                                    <button id="regenCode" class="btn btn-ghost btn-xs">New code</button>
+                                </div>
+                                <div class="mt-2 text-sm">Give other PCs <strong id="relayShare" class="font-mono">-</strong>
+                                    <button id="copyShare" class="btn btn-ghost btn-xs">Copy</button>
+                                </div>
+                                <div class="button-row mt-2"><button id="saveRelay" class="btn btn-primary btn-sm">Save</button></div>
+                                <p id="relayAck" class="text-xs opacity-60 mt-2">Sweeps, logging, calibration, firmware and Admin always stay on this PC. Traffic is not encrypted: use a trusted network.</p>
+                                <p class="text-xs mt-2">Browser address: <span id="relayUrls" class="font-mono">-</span></p>
+                                <div class="text-xs font-bold mt-2">Connected devices</div>
+                                <div id="relayClients" class="log"></div>
                             </div>
-                            <label class="mt-2">Access code<input id="remoteCode" class="input input-bordered input-sm w-full font-mono" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false"></label>
-                            <div class="button-row mt-2">
-                                <button id="remoteConnect" class="btn btn-primary btn-sm">Connect</button>
-                                <button id="remoteDisconnect" class="btn btn-sm btn-outline">Disconnect</button>
+                            <div>
+                                <div class="panel-heading"><h2 class="card-title text-base">Use a tunnel that is connected to another PC</h2><span id="remotePill" class="badge badge-neutral">Not connected</span></div>
+                                <p class="text-xs opacity-70">This app then mirrors that PC and stops using its own USB/network link.</p>
+                                <div class="text-xs font-bold mt-2">PCs found on this network</div>
+                                <div id="discoveredMasters" class="log"></div>
+                                <div class="split mt-2">
+                                    <label>PC address<input id="remoteHost" class="input input-bordered input-sm w-full" placeholder="e.g. 192.168.1.20"></label>
+                                    <label>Port<input id="remotePort" type="number" min="1" max="65535" class="input input-bordered input-sm w-full" value="8090"></label>
+                                </div>
+                                <label class="mt-2">Access code<input id="remoteCode" class="input input-bordered input-sm w-full font-mono" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false"></label>
+                                <div class="button-row mt-2">
+                                    <button id="remoteConnect" class="btn btn-primary btn-sm">Connect</button>
+                                    <button id="remoteDisconnect" class="btn btn-sm btn-outline">Disconnect</button>
+                                </div>
+                                <p id="remoteAck" class="text-xs opacity-60 mt-2">Not connected.</p>
                             </div>
-                            <p id="remoteAck" class="text-xs opacity-60 mt-2">Not connected.</p>
                         </div>
-                    </article>
-                </div>
+                    </div>
+                </details>
             </div>
 
             <!-- BOOTLOADER TAB -->

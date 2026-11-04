@@ -730,7 +730,9 @@ async function scanNetwork(port) {
             const host = candidates[cursor];
             cursor += 1;
             const version = await probe(host, targetPort, 700);
-            if (version !== null) found.push({ host, port: targetPort, apiVersion: version });
+            if (typeof version === 'number') found.push({ host, port: targetPort, apiVersion: version });
+            // A controller answered but its access control would not let this PC in (no/wrong key, USB in control).
+            else if (version && version.locked) found.push({ host, port: targetPort, apiVersion: null, locked: version.locked });
         }
     };
     await Promise.all(Array.from({ length: 48 }, worker));

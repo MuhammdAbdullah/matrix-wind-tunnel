@@ -10,6 +10,7 @@
         "dev": "electron . --dev",
         "build-win": "electron-builder --win --publish never",
         "rebuild-hid": "electron-rebuild -f -w node-hid",
+        "test:netauth": "node tools/netauth-selftest.js",
         "build-mac": "electron-builder --mac --publish never",
         "build-linux": "electron-builder --linux --publish never"
     },

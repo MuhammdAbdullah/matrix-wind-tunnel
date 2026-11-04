@@ -21,7 +21,16 @@ const state = {
     // Remote sessions only: whether the master lets this client send commands ('view' | 'control').
     remoteAccess: null,
     // Public network status shown in Admin (relay clients, relay port); filled in by main/network.js.
-    network: { relay: { running: false, mode: 'off', port: null, clients: [] }, remote: { connected: false, host: null }, discovered: [], ethernetYield: null },
+    network: {
+        relay: { running: false, mode: 'off', port: null, clients: [] },
+        remote: { connected: false, host: null },
+        discovered: [],
+        ethernetYield: null,
+        // Set when the controller's access control refused this PC over Ethernet: { code, message, at }.
+        ethernetBlocked: null,
+        // What the controller reports about its own network (main/netinfo.js): { supported, ip, port, dhcp, mac, staticIp, readAt }.
+        controller: null
+    },
     apiVersion: API_VERSION,
     fanSpeed: 0,
     angle: 0,

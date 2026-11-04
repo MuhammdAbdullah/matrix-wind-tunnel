@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('windTunnel', {
     setLutTable: (velocities) => ipcRenderer.invoke('calibration:setLutTable', { velocities }),
     getLut: () => ipcRenderer.invoke('calibration:getLut'),
     setLutFan: (percent) => ipcRenderer.invoke('calibration:setLutFan', { percent }),
-    setNetwork: (ip0, ip1, ip2, ip3, port, dhcp) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port, dhcp }),
+    setNetwork: (ip0, ip1, ip2, ip3, port, dhcp, mac) => ipcRenderer.invoke('calibration:setNetwork', { ip0, ip1, ip2, ip3, port, dhcp, mac }),
 
     getNetworkSettings: () => ipcRenderer.invoke('network:getSettings'),
     saveEthernetSettings: (settings) => ipcRenderer.invoke('network:saveEthernet', settings),
@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('windTunnel', {
     scanNetwork: (port) => ipcRenderer.invoke('network:scan', port),
     connectRemote: (host, port, code) => ipcRenderer.invoke('network:connectRemote', { host, port, code }),
     disconnectRemote: () => ipcRenderer.invoke('network:disconnectRemote'),
+    readControllerInfo: () => ipcRenderer.invoke('network:readControllerInfo'),
 
     getFirmwareInfo: () => ipcRenderer.invoke('admin:firmwareInfo'),
     bootloaderPickHex: () => ipcRenderer.invoke('admin:bootloaderPickHex'),

@@ -1,6 +1,7 @@
 const { CMD } = require('./protocol');
 const { state, publish, clamp, simulateSensors, appendAudit, API_VERSION } = require('./state');
 const { EthernetPort, DEFAULT_ETHERNET_PORT } = require('./ethernet');
+const { pingOnce } = require('./reach');
 
 let SerialPort;
 try { ({ SerialPort } = require('serialport')); } catch (error) { console.log(`[serial] Failed to load 'serialport' module: ${error.message}`); SerialPort = null; }
@@ -10,7 +11,35 @@ const USB_PRODUCT_ID = 0xF010;
 const SCAN_INTERVAL_MS = 2000;
 const RESCAN_AFTER_LOSS_MS = 500;
 const MAX_CONNECT_BACKOFF_MS = 4000;
+// The controller has one W5500 socket. The "Socket fix / B-nousb" firmware (EthPoll) drops a vanished
+// client within ~5-10 s (WebSocket PingIdle 25), refuses a connection while it holds a stale session
+// instead of wedging, and no longer re-runs DHCP after a failed client, so a retry costs the controller
+// nothing. The old 10-25 s quiet periods (written for the legacy socket, which stayed wedged for ~23 s)
+// only made a cable unplug/replug feel much longer than it is: keep the waits short.
+// After an established Ethernet session is lost (the app notices after LINK_LOST_MS, so the cable has
+// usually been back a while by then):
+const ETHERNET_LINK_RECOVERY_MS = 500;
+// Failed attempts back off from this, doubling up to the cap, until one succeeds:
+const ETHERNET_RETRY_BASE_MS = 1000;
+const ETHERNET_RETRY_MAX_MS = 5000;
+// Ethernet refused by the controller's access control (it did not accept this connection, e.g. it was
+// still closing the previous session). Only a floor under the retry delay above.
+const ETHERNET_BLOCKED_BACKOFF_MS = 3000;
+// Ping-assisted link tracking (see reachTick). USB reports an unplug at once; a network cable gives no signal,
+// so without this an Ethernet drop is only noticed after LINK_LOST_MS and a reconnect attempt to a controller
+// that is still unreachable hangs for the whole connect timeout before the next one can start.
+const REACH_INTERVAL_MS = 700;
+const REACH_PING_MS = 600;
+// While connected, only ping once the API has been silent this long; two failed pings then end the link.
+const REACH_SILENT_MS = 2000;
+// While the controller does not answer ping, skip connect attempts, but still try this often in case ICMP is filtered.
+const REACH_GATE_MAX_MS = 10000;
+const ETHERNET_BLOCKED_CODES = new Set(['USB_IN_CONTROL', 'AUTH_FAILED']);
 const OPEN_TIMEOUT_MS = 5000;
+// EthernetPort.open() includes both the HTTP upgrade and the controller access handshake. Keep the
+// outer timeout above both budgets; otherwise serial.js can abandon a socket that is still making
+// legitimate progress.
+const ETHERNET_OPEN_TIMEOUT_MS = 15000;
 const CLOSE_TIMEOUT_MS = 3000;
 const MAX_FRAME_RETRIES = 2;
 const MAX_JSON_BUFFER = 2048;
@@ -35,7 +64,14 @@ const WATCHDOG_GRACE_MS = {
     [CMD.GET_LUT]: 3000
 };
 const SERIAL_DEBUG = process.env.WIND_TUNNEL_SERIAL_DEBUG === '1';
-const RESPONSE_COMMANDS = new Set([CMD.VERSION, CMD.READ_SENSORS, CMD.GET_SCALERS, CMD.GET_LUT]);
+// WIND_TUNNEL_SERIAL_DEBUG=1: one timestamped line per message sent/received on the active link (USB or Ethernet),
+// plus the Ethernet handshake frames (ethernet.js). Printed to the terminal that launched the app.
+function trace(direction, buffer) {
+    if (!SERIAL_DEBUG) return;
+    const stamp = new Date().toISOString().slice(11, 23);
+    console.log(`[comms ${stamp}] ${direction} ${state.transport || 'link'} ${JSON.stringify(buffer.toString('utf8'))}`);
+}
+const RESPONSE_COMMANDS = new Set([CMD.VERSION, CMD.READ_SENSORS, CMD.GET_SCALERS, CMD.GET_LUT, CMD.NETINFO, CMD.MACINFO]);
 const LUT_KEYS = Array.from({ length: 10 }, (_unused, index) => `vl${index}`);
 // A reply object only resolves the pending command if it carries every one of that command's keys as
 // a finite number; anything else (e.g. the late second half of a getvlu reply after a retry, or a
@@ -43,7 +79,14 @@ const LUT_KEYS = Array.from({ length: 10 }, (_unused, index) => `vl${index}`);
 const RESPONSE_KEYS = {
     [CMD.VERSION]: ['version'],
     [CMD.READ_SENSORS]: ['lift', 'drag', 'pressure', 'velocity'],
-    [CMD.GET_SCALERS]: ['sl', 'sd', 'sp']
+    [CMD.GET_SCALERS]: ['sl', 'sd', 'sp'],
+    [CMD.NETINFO]: ['port', 'dhcp']
+};
+// Keys whose reply values are non-empty strings (addresses). Checked in addition to RESPONSE_KEYS, which
+// stays strictly numeric for every other key.
+const RESPONSE_STRING_KEYS = {
+    [CMD.NETINFO]: ['ip'],
+    [CMD.MACINFO]: ['mac', 'sip']
 };
 
 // Thrown when the link itself is gone (as opposed to one command timing out): never retried.
@@ -74,6 +117,14 @@ let lastPortSignature = null;
 
 // Set by main/network.js from the saved Admin settings. USB always wins: this is only a fallback used
 // while no USB controller is present.
+// Ping tracking. reachSeenFor = the host that has answered a ping at least once: only then does a failed ping
+// mean anything (ICMP may be filtered on some networks, and then ping must never end a working link).
+let reachSeenFor = '';
+let controllerReachable = true;
+let reachFailures = 0;
+let reachBusy = false;
+let reachTimer = null;
+let lastEthernetAttemptAt = 0;
 let ethernetTarget = { enabled: false, host: '', port: DEFAULT_ETHERNET_PORT };
 
 // Set by main/network.js while another PC announces that it owns the controller over USB: the USB master
@@ -87,6 +138,7 @@ function setEthernetYield(reason) {
 }
 
 function setEthernetTarget(target) {
+    if (String(target.host || '').trim() !== ethernetTarget.host) { reachSeenFor = ''; controllerReachable = true; reachFailures = 0; }
     ethernetTarget = { enabled: Boolean(target.enabled), host: String(target.host || '').trim(), port: Number(target.port) || DEFAULT_ETHERNET_PORT };
     requestRescan(100);
 }
@@ -101,6 +153,29 @@ function notifyUnexpectedDisconnect(reason) {
     disconnectListeners.forEach((listener) => {
         try { listener(reason); } catch (_error) { /* listener errors must not break reconnect flow */ }
     });
+}
+
+const connectedListeners = [];
+
+// Called (never throws into the connect flow) once a session is verified and live; main/netinfo.js uses it
+// to read the controller's network identity.
+function onConnected(listener) {
+    connectedListeners.push(listener);
+}
+
+function notifyConnected() {
+    connectedListeners.forEach((listener) => {
+        try { listener(state.transport); } catch (_error) { /* listener errors must not break the connect flow */ }
+    });
+}
+
+// The controller's access control refused this PC (USB in control, or it did not accept the connection). Shown in Admin > Network.
+function noteEthernetBlocked(error) {
+    if (!error || !error.isAuth) return false;
+    state.network.ethernetBlocked = { code: error.code, message: error.message, at: new Date().toISOString() };
+    if (ETHERNET_BLOCKED_CODES.has(error.code)) nextConnectAttemptAt = Date.now() + ETHERNET_BLOCKED_BACKOFF_MS;
+    publish();
+    return true;
 }
 
 function record(direction, data) {
@@ -131,7 +206,16 @@ function jsonRequestFor(command, payload) {
         case CMD.GET_LUT: return { getvlu: 0 };
         // V2.0.7 added the dhcp flag (WindTunnelAPI 1.xlsx). It is always sent: the firmware only applies the
         // address to the W5500 and re-creates the WebSocket server when `dhcp` is present, and it sends no reply.
-        case CMD.SET_NETWORK: return { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4), dhcp: payload.length > 6 ? payload[6] : 0 };
+        // A 13-byte payload (7 + 6 MAC bytes) also carries mac0..mac5, sent before dhcp so the firmware stores the
+        // MAC before it re-applies the network.
+        case CMD.SET_NETWORK: {
+            const request = { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4) };
+            if (payload.length >= 13) for (let index = 0; index < 6; index += 1) request[`mac${index}`] = payload[7 + index];
+            request.dhcp = payload.length > 6 ? payload[6] : 0;
+            return request;
+        }
+        case CMD.NETINFO: return { netinfo: 0 };
+        case CMD.MACINFO: return { macinfo: 0 };
         // Same trigger Process Control V2 sends ({"BL":1}); the controller resets into its USB HID
         // bootloader and does not reply, so this command is never in RESPONSE_COMMANDS.
         case CMD.ENTER_BOOTLOADER: return { BL: 1 };
@@ -156,6 +240,9 @@ function responseToPayload(command, response) {
         for (let index = 0; index < 10; index += 1) payload.writeFloatLE(Number(response[`vl${index}`]), index * 4);
         return payload;
     }
+    // Address/identity replies carry strings, so they are handed on as the reply object's JSON text.
+    if (command === CMD.NETINFO) return Buffer.from(JSON.stringify({ ip: response.ip, port: Number(response.port), dhcp: Number(response.dhcp) }));
+    if (command === CMD.MACINFO) return Buffer.from(JSON.stringify({ mac: response.mac, sip: response.sip }));
     return Buffer.alloc(0);
 }
 
@@ -181,6 +268,7 @@ function sendJsonAttempt(command, payload, timeout, expectResponse = true) {
         }, timeout);
         pendingCommand = request;
         record('tx', packet);
+        trace('TX', packet);
         const onWritten = (error) => {
             if (error) {
                 if (pendingCommand === request) pendingCommand = null;
@@ -295,7 +383,7 @@ function applyTouchUpdate(message) {
 
 function handleData(chunk) {
     record('rx', chunk);
-    if (SERIAL_DEBUG) console.log(`[serial] RX ${chunk.length}B: ${chunk.toString('hex')}`);
+    trace('RX', chunk);
     jsonBuffer += chunk.toString('utf8');
     while (true) {
         const end = jsonBuffer.indexOf('}');
@@ -329,7 +417,8 @@ function handleData(chunk) {
             request.partial = { ...request.partial, ...response };
             if (!LUT_KEYS.every((key) => key in request.partial)) continue;
             response = request.partial;
-        } else if (RESPONSE_KEYS[request.command] && !RESPONSE_KEYS[request.command].every((key) => Number.isFinite(Number(response[key])) && response[key] !== null && response[key] !== '')) {
+        } else if ((RESPONSE_KEYS[request.command] && !RESPONSE_KEYS[request.command].every((key) => Number.isFinite(Number(response[key])) && response[key] !== null && response[key] !== ''))
+            || (RESPONSE_STRING_KEYS[request.command] && !RESPONSE_STRING_KEYS[request.command].every((key) => typeof response[key] === 'string' && response[key].length > 0))) {
             console.log(`[serial] Ignoring stray JSON response while waiting for ${request.command}: ${text}`);
             continue;
         }
@@ -359,10 +448,10 @@ function closePortQuietly(port) {
 
 // Open with a hard time limit. If the open eventually completes after we gave up, close it again
 // so the COM port is not left locked by a handle nobody owns.
-function openPort(port) {
+function openPort(port, timeoutMs = OPEN_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
         let timedOut = false;
-        const timer = setTimeout(() => { timedOut = true; reject(new Error(`Timed out opening ${port.path}`)); }, OPEN_TIMEOUT_MS);
+        const timer = setTimeout(() => { timedOut = true; reject(new Error(`Timed out opening ${port.path}`)); }, timeoutMs);
         try {
             port.open((error) => {
                 clearTimeout(timer);
@@ -387,6 +476,7 @@ function releasePort(port) {
 function markLinkLost(reason, port = serialPort) {
     if (!port || port !== serialPort) return;
     const wasConnected = state.connected;
+    const lostTransport = state.transport;
     console.log(`[serial] Link lost: ${reason}`);
     serialPort = null;
     linkGeneration += 1;
@@ -399,9 +489,16 @@ function markLinkLost(reason, port = serialPort) {
     state.port = null;
     state.transport = null;
     state.linkDegraded = false;
+    state.network.controller = null;
     publish();
     if (wasConnected) notifyUnexpectedDisconnect(reason);
-    requestRescan(RESCAN_AFTER_LOSS_MS);
+    if (lostTransport === 'ethernet') {
+        console.log(`[serial] Ethernet socket recovery: waiting ${ETHERNET_LINK_RECOVERY_MS / 1000}s before reconnecting`);
+        nextConnectAttemptAt = Math.max(nextConnectAttemptAt, Date.now() + ETHERNET_LINK_RECOVERY_MS);
+        requestRescan(ETHERNET_LINK_RECOVERY_MS);
+    } else {
+        requestRescan(RESCAN_AFTER_LOSS_MS);
+    }
 }
 
 function bindPort(port) {
@@ -410,6 +507,7 @@ function bindPort(port) {
         console.log(`[serial] Port error: ${error.message}`);
         if (port !== serialPort) return;
         state.diagnostics.errors += 1;
+        noteEthernetBlocked(error);
         // An error on the active port means the stream is unusable (serialport destroys it).
         markLinkLost(`port error: ${error.message}`, port);
     });
@@ -468,9 +566,10 @@ async function openSession(target) {
     };
 
     try {
-        await openPort(port);
+        await openPort(port, target.transport === 'ethernet' ? ETHERNET_OPEN_TIMEOUT_MS : OPEN_TIMEOUT_MS);
     } catch (error) {
         console.log(`[serial] Failed to open ${portPath}: ${error.message}`);
+        noteEthernetBlocked(error);
         abandon();
         throw error;
     }
@@ -509,10 +608,15 @@ async function openSession(target) {
     state.linkDegraded = false;
     state.port = portPath;
     state.transport = target.transport;
+    if (target.transport === 'ethernet') {
+        state.network.ethernetBlocked = null;
+        pingOnce(target.host, REACH_PING_MS).then((ok) => { if (ok && ethernetTarget.host === target.host) { reachSeenFor = target.host; controllerReachable = true; } });
+    }
     publish();
     startWatchdog();
     // Whatever the controller was doing before this session (or before a link drop) is stale.
     await enterSafeState('system');
+    notifyConnected();
     return state;
 }
 
@@ -558,6 +662,7 @@ function disconnect() {
     state.linkDegraded = false;
     state.simulation = false;
     state.fanSpeed = 0;
+    state.network.controller = null;
     publish();
 }
 
@@ -650,12 +755,15 @@ async function scanOnce() {
         } else if (state.connected) return;
         if (!targetPath) {
             if (!ethernetTarget.enabled || !ethernetTarget.host || ethernetYieldReason) return;
+            if (reachSeenFor === ethernetTarget.host && !controllerReachable && Date.now() - lastEthernetAttemptAt < REACH_GATE_MAX_MS) return;
+            lastEthernetAttemptAt = Date.now();
             console.log(`[serial] No USB controller; trying Ethernet ${ethernetTarget.host}:${ethernetTarget.port}`);
             try { await connectEthernet(ethernetTarget.host, ethernetTarget.port); }
             catch (error) {
                 console.log(`[serial] Ethernet connect failed: ${error.message}`);
                 connectFailureStreak += 1;
-                nextConnectAttemptAt = Date.now() + Math.min(500 * 2 ** (connectFailureStreak - 1), MAX_CONNECT_BACKOFF_MS);
+                const backoffUntil = Date.now() + Math.min(ETHERNET_RETRY_BASE_MS * 2 ** (connectFailureStreak - 1), ETHERNET_RETRY_MAX_MS);
+                nextConnectAttemptAt = ETHERNET_BLOCKED_CODES.has(error.code) ? Math.max(backoffUntil, nextConnectAttemptAt) : backoffUntil;
                 publish();
             }
             return;
@@ -672,10 +780,41 @@ async function scanOnce() {
     } finally { scanBusy = false; }
 }
 
+async function reachTick() {
+    if (reachBusy || state.simulation || state.transport === 'remote' || state.transport === 'usb') return;
+    const { enabled, host } = ethernetTarget;
+    if (!enabled || !host) return;
+    const onEthernet = state.connected && state.transport === 'ethernet';
+    if (onEthernet && Date.now() - Math.max(lastRxOkAt, watchdogGraceUntil) < REACH_SILENT_MS) { reachFailures = 0; return; }
+    reachBusy = true;
+    const port = serialPort;
+    try {
+        if (await pingOnce(host, REACH_PING_MS)) {
+            reachSeenFor = host;
+            reachFailures = 0;
+            if (!controllerReachable) {
+                controllerReachable = true;
+                console.log('[serial] Controller answers ping again: reconnecting now');
+                nextConnectAttemptAt = 0;
+                connectFailureStreak = 0;
+                requestRescan(0);
+            }
+            return;
+        }
+        reachFailures += 1;
+        if (reachSeenFor !== host || reachFailures < 2) return;
+        if (controllerReachable) console.log('[serial] Controller no longer answers ping (cable unplugged or network down)');
+        controllerReachable = false;
+        if (onEthernet && serialPort === port && state.transport === 'ethernet') markLinkLost('the controller stopped answering on the network (cable unplugged?)', port);
+    } finally { reachBusy = false; }
+}
+
 function startAutoConnect() {
     if (!SerialPort) console.log('[serial] SerialPort module is not available; USB auto-connect disabled');
     if (scanTimer) return;
     scanTimer = setInterval(scanOnce, SCAN_INTERVAL_MS);
+    reachTimer = setInterval(reachTick, REACH_INTERVAL_MS);
+    if (reachTimer.unref) reachTimer.unref();
     scanOnce();
 }
 
@@ -763,5 +902,6 @@ module.exports = {
     setLeds,
     enterSafeState,
     readSensorsOnce,
-    onUnexpectedDisconnect
+    onUnexpectedDisconnect,
+    onConnected
 };

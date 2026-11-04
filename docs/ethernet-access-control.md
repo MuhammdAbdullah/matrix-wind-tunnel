@@ -1,0 +1,59 @@
+# Ethernet access control and network identity (firmware V2.0.7 + access-control patch)
+
+Status: **written against the edited `../Firmware/WindTunnel V2.0.7.fcfx`. Not compiled in Flowcode and not run on hardware.** The `.hex`/`.c` in `Firmware/` are still the old build until the `.fcfx` is rebuilt in Flowcode. Originals are in `Firmware/Archive/pre-auth-backup/`.
+
+This stops accidental and casual connections: a browser, a port scanner, an old app or any other program that does not speak the Wind Tunnel handshake is dropped. **It is not a secret and not cryptography.** The handshake words are fixed and written down here, so anyone who reads this file (or sniffs the LAN once) can replay them. There is deliberately no key for the operator to manage; if real security is ever needed, add a per-controller secret on top of this handshake.
+
+## Rules
+
+1. **USB is the master and always wins.** USB needs no handshake. The controller treats USB as live when it has received any USB command in the last ~6-12 s (the app's 1.5 s heartbeat keeps it live). While USB is live, an Ethernet client is sent `{"auth":2}` and closed, and new Ethernet clients are refused the same way.
+2. **Ethernet works only when USB is not live, and only after the handshake.** Anything an unverified Ethernet client sends other than the next handshake step gets `{"auth":0}` and the socket is closed. No handshake within ~5-10 s: `{"auth":4}` and closed.
+3. **A client that fails the handshake makes the controller renew its address** (DHCP request again; with a fixed IP nothing changes). At most once per ~30 s. USB-in-control rejections do not trigger it. Most routers hand back the same address, so the IP may or may not actually change: the operator re-reads it on the touchscreen.
+4. The fan is not touched by an unverified or rejected client. A verified session still starts with fan 0 and a disconnect of a verified session still sets fan 0 (as V2.0.7 did for any client).
+
+## The operator's view
+
+Read the controller's IP on its touchscreen (Settings page) -> type it in Admin -> Network -> press Connect. Nothing else to set up. If it stops working, read the touchscreen again (the IP may have changed after the controller dropped an unknown device).
+
+## Handshake (Ethernet, JSON text frames, one object per frame)
+
+```
+app -> controller   {"hi":1}        "Hi"
+controller -> app   {"hey":1}       "Hey"
+app -> controller   {"com":1}       "COM"
+controller -> app   {"ok":1}        "OK"   (verified; normal API from now on)
+```
+
+Terminal replies (then the controller closes the socket): `{"auth":0}` wrong or out-of-order message / unverified command, `{"auth":2}` USB has control, `{"auth":4}` timed out. The firmware matches the key names `hi` and `com` in the received JSON (`FindName`, substring match) and ignores the values; an unverified message is never run as a command, even if it also carries one.
+
+A controller without this patch never answers `hi` (it ignores unknown keys). The app treats "no `hey` within ~1.5 s of connecting" as legacy firmware and continues unauthenticated.
+
+## New and changed API (all flat JSON, same style as the existing API)
+
+| Request | Reply | Notes |
+|---|---|---|
+| `{"netinfo":0}` | `{"ip":"a.b.c.d","port":1245,"dhcp":1}` | `ip` is the live address (DHCP lease or static). |
+| `{"macinfo":0}` | `{"mac":"00:08:DC:00:00:00","sip":"192.168.1.150"}` | `sip` is the stored static IP (the DHCP-off address). |
+| `{"ip0":a,"ip1":b,"ip2":c,"ip3":d,"port":p,"dhcp":d,"mac0":..,"mac5":..}` | none | Existing set-network command; `mac0..mac5` (decimal bytes) are new and optional. Applied together with `dhcp` (the controller re-applies the network only when `dhcp` is present, as before). The MAC is stored in EEPROM words 46-51 and applied before DHCP/static IP. A MAC with the multicast bit set (`mac0 & 1`) or all zeros is ignored. |
+
+MAC default when EEPROM word 46 is blank: the W5500 component's `00:08:DC:00:00:00` (unchanged from V2.0.7). Every unit ships with that same MAC, so two controllers on one LAN will collide until one is given a different MAC.
+
+## EEPROM map additions (word addresses, 16-bit cells)
+
+| Address | Content |
+|---|---|
+| 46-51 | MAC bytes 0-5 (blank = `0xFFFF` in word 46 means "use default MAC") |
+
+(Words 42-45 were used by an earlier keyed draft of this feature and are now unused.)
+
+## Touchscreen
+
+Settings screen additionally shows `Port : <n>` and `MAC : <12 hex digits>` under the IP line (y positions 220 and 250 are a guess: check on hardware).
+
+## App behaviour (main/ethernet.js, main/netinfo.js)
+
+- `EthernetPort` sends `{"hi":1}` as soon as the WebSocket opens, answers `{"hey":1}` with `{"com":1}` and only reports the link open after `{"ok":1}`. Handshake frames never reach the command layer. No `hey` within 1.5 s = legacy firmware, continue unauthenticated. Total handshake budget ~6 s.
+- Failure codes: `USB_IN_CONTROL` (`auth:2`), `AUTH_FAILED` (`auth:0`), `AUTH_TIMEOUT` (`auth:4` or the app's own budget). After a refusal the scanner waits 15 s before trying Ethernet again. The Admin banner for `AUTH_FAILED`/`AUTH_TIMEOUT` tells the operator to re-read the IP on the touchscreen.
+- The set-network read-back (USB only) compares `netinfo`/`macinfo` with the request; over Ethernet the link drops while the controller re-applies the network, so no read-back is attempted.
+- `probe()` (network scan) returns the API version, or `{ locked: 'usb-in-control' | 'refused' | 'timeout' }`, or `null`. Scanning runs the handshake against every host, so it only finds controllers that answer it.
+- Self-tests: `npm run test:netauth` runs the app side against `tools/mock-controller.js`; `python tools/firmware-auth-test/run.py` extracts the embedded C from the `.fcfx` and runs it under gcc with stubs (logic only: it does not prove the firmware compiles under Flowcode/XC16). `tools/firmware-auth-test/patch-fcfx.js` re-creates the edits from `Firmware/Archive/pre-auth-backup/`.

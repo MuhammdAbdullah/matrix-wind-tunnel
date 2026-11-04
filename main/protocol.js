@@ -11,7 +11,10 @@ const CMD = {
     SET_LUT: 'J',
     GET_LUT: 'K',
     SET_NETWORK: 'M',
-    ENTER_BOOTLOADER: 'N'
+    ENTER_BOOTLOADER: 'N',
+    // Ethernet access control / network identity (docs/ethernet-access-control.md). Flat JSON only.
+    NETINFO: 'O',
+    MACINFO: 'P'
 };
 
 const START_MARKER = 0x3A;

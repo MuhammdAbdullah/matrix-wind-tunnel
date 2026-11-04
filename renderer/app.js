@@ -222,8 +222,6 @@ function applyExperiment(experiment) {
     renderCharts();
 }
 
-window.windTunnel.getAppVersion().then((version) => { $('appVersion').textContent = `v${version}`; }).catch(() => {});
-
 async function loadExperiments(selectedId) {
     const { experiments, dragShapes } = await window.windTunnel.listExperiments();
     state.experiments = experiments;

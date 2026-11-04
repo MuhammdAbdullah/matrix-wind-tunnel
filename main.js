@@ -32,6 +32,9 @@ function createWindow() {
         }
     });
     mainWindow.setMenuBarVisibility(false);
+    // The window title bar carries the app version; keep the page's own <title> from overwriting it.
+    mainWindow.setTitle(`Wind Tunnel v${app.getVersion()}`);
+    mainWindow.on('page-title-updated', (event) => event.preventDefault());
     mainWindow.webContents.on('before-input-event', (_event, input) => {
         if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'i') {
             mainWindow.webContents.toggleDevTools();
@@ -199,7 +202,6 @@ ipcMain.handle('network:disconnectRemote', adminOnly(() => network.disconnectRem
 // Controller network identity (docs/ethernet-access-control.md).
 ipcMain.handle('network:readControllerInfo', adminOnly(() => netinfo.readControllerInfo()));
 
-ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.LATEST_FIRMWARE_VERSION }));
 ipcMain.handle('admin:bootloaderPickHex', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Select firmware hex file', filters: [{ name: 'Hex Files', extensions: ['hex'] }], properties: ['openFile'] });

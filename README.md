@@ -311,6 +311,11 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ## Release notes
 
+### v0.2.4
+
+- New: Ethernet access control and controller network info.
+- Change: the app version is shown in the window title bar.
+
 ### v0.2.3
 
 - Change: there is no longer an "approved" firmware image. V2.0.7 is the latest firmware and `getFirmwareInfo()` reports `2.0.7`. The hex-file rule is only that the name starts with `WindTunnel` (case-insensitive, anything after it allowed); the rejection message now reads "not a Wind Tunnel firmware image". `main/firmware.js` no longer has `APPROVED_FIRMWARE_VERSION` / `APPROVED_IMAGE_NAME` (now `LATEST_FIRMWARE_VERSION`).

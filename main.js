@@ -199,6 +199,7 @@ ipcMain.handle('network:disconnectRemote', adminOnly(() => network.disconnectRem
 // Controller network identity (docs/ethernet-access-control.md).
 ipcMain.handle('network:readControllerInfo', adminOnly(() => netinfo.readControllerInfo()));
 
+ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('admin:firmwareInfo', () => ({ version: firmware.LATEST_FIRMWARE_VERSION }));
 ipcMain.handle('admin:bootloaderPickHex', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: 'Select firmware hex file', filters: [{ name: 'Hex Files', extensions: ['hex'] }], properties: ['openFile'] });

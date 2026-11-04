@@ -50,7 +50,8 @@ contextBridge.exposeInMainWorld('windTunnel', {
     disconnectRemote: () => ipcRenderer.invoke('network:disconnectRemote'),
     readControllerInfo: () => ipcRenderer.invoke('network:readControllerInfo'),
 
-    getFirmwareInfo: () => ipcRenderer.invoke('admin:firmwareInfo'),
+    getAppVersion: () => ipcRenderer.invoke('app:version'),
+    getFirmwareInfo:() => ipcRenderer.invoke('admin:firmwareInfo'),
     bootloaderPickHex: () => ipcRenderer.invoke('admin:bootloaderPickHex'),
     bootloaderTrigger: () => ipcRenderer.invoke('admin:bootloaderTrigger'),
     bootloaderCheckDevice: (vid, pid) => ipcRenderer.invoke('admin:bootloaderCheckDevice', vid, pid),

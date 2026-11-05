@@ -34,15 +34,17 @@ A controller without this patch never answers `hi` (it ignores unknown keys). Th
 |---|---|---|
 | `{"netinfo":0}` | `{"ip":"a.b.c.d","port":1245,"dhcp":1}` | `ip` is the live address (DHCP lease or static). |
 | `{"macinfo":0}` | `{"mac":"00:08:DC:00:00:00","sip":"192.168.1.150"}` | `sip` is the stored static IP (the DHCP-off address). |
-| `{"ip0":a,"ip1":b,"ip2":c,"ip3":d,"port":p,"dhcp":d,"mac0":..,"mac5":..}` | none | Existing set-network command; `mac0..mac5` (decimal bytes) are new and optional. Applied together with `dhcp` (the controller re-applies the network only when `dhcp` is present, as before). The MAC is stored in EEPROM words 46-51 and applied before DHCP/static IP. A MAC with the multicast bit set (`mac0 & 1`) or all zeros is ignored. |
+| `{"ip0":a,"ip1":b,"ip2":c,"ip3":d,"port":p,"dhcp":d}` and, **before it, in a separate frame**, `{"mac0":..,"mac5":..}` | none | Existing set-network command plus the new, optional MAC frame (decimal bytes). **They must be two frames:** the firmware reads a request into a 100-byte buffer (`FCM_ParseJSON`, `FCL_JSON_DATA[100]`), and the combined frame is up to 124 characters, so it is cut off before `mac4`/`mac5`/`dhcp` and the MAC is silently ignored (and the 24 extra bytes overrun the stack buffer). The MAC frame is stored when it arrives; it reaches the W5500 when the following frame's `dhcp` makes the controller re-apply the network (the controller re-applies the network only when `dhcp` is present, as before). The MAC is stored in EEPROM words 46-51 (the flasheeprom2 component writes straight to flash; the firmware checks each `Write` result and reads every word back, and only then uses the new MAC, so a failed save leaves the old MAC in force) and applied before DHCP/static IP. **The first three bytes (the OUI) are fixed at `00:08:DC`**, the WIZnet block the W5500 ships with (multicast bit 0 and locally-administered bit 1 both clear, so it is unicast and globally unique); a request whose `mac0..mac2` are not `0, 8, 220` is ignored as a whole, as is one with a missing or out-of-range field. Only `mac3..mac5` (the NIC specific part) are free. |
 
-MAC default when EEPROM word 46 is blank: the W5500 component's `00:08:DC:00:00:00` (unchanged from V2.0.7). Every unit ships with that same MAC, so two controllers on one LAN will collide until one is given a different MAC.
+MAC default when EEPROM word 46 is blank (or holds a MAC with another OUI, which `LoadMAC` refuses): the W5500 component's `00:08:DC:00:00:00` (unchanged from V2.0.7). Every unit ships with that same MAC, so two controllers on one LAN will collide until one is given a different last three bytes. Writing `00:08:DC:00:00:00` back restores the default.
+
+**Who can change it:** only the Admin -> Network tab (`#networkMac` holds just the last three bytes; the prefix is shown fixed). `calibration:setNetwork` is Admin-gated in the main process (`guard()`), the renderer re-asks for the Admin password if the session lapsed, and the relay never exposes it. The touchscreen only displays the MAC. The app validates with `netinfo.macProblem()`; the firmware enforces the same rule independently.
 
 ## EEPROM map additions (word addresses, 16-bit cells)
 
 | Address | Content |
 |---|---|
-| 46-51 | MAC bytes 0-5 (blank = `0xFFFF` in word 46 means "use default MAC") |
+| 46-51 | MAC bytes 0-5 (blank = `0xFFFF` in word 46 means "use default MAC"; bytes 0-2 must be `00 08 DC`, otherwise the stored MAC is ignored) |
 
 (Words 42-45 were used by an earlier keyed draft of this feature and are now unused.)
 

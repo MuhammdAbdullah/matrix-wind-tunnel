@@ -59,6 +59,7 @@ const LINK_LOST_MS = 8000;
 // re-init). The watchdog treats the grace window as "recent activity".
 const WATCHDOG_GRACE_MS = {
     [CMD.SET_NETWORK]: 10000,
+    [CMD.SET_MAC]: 3000,
     [CMD.SET_SCALER]: 3000,
     [CMD.SET_LUT]: 3000,
     [CMD.GET_LUT]: 3000
@@ -206,12 +207,18 @@ function jsonRequestFor(command, payload) {
         case CMD.GET_LUT: return { getvlu: 0 };
         // V2.0.7 added the dhcp flag (WindTunnelAPI 1.xlsx). It is always sent: the firmware only applies the
         // address to the W5500 and re-creates the WebSocket server when `dhcp` is present, and it sends no reply.
-        // A 13-byte payload (7 + 6 MAC bytes) also carries mac0..mac5, sent before dhcp so the firmware stores the
-        // MAC before it re-applies the network.
         case CMD.SET_NETWORK: {
             const request = { ip0: payload[0], ip1: payload[1], ip2: payload[2], ip3: payload[3], port: payload.readUInt16LE(4) };
-            if (payload.length >= 13) for (let index = 0; index < 6; index += 1) request[`mac${index}`] = payload[7 + index];
             request.dhcp = payload.length > 6 ? payload[6] : 0;
+            return request;
+        }
+        // The MAC must travel in its own frame, sent before SET_NETWORK: the firmware reads a request into a 100-byte
+        // buffer (FCM_ParseJSON), and ip0-ip3 + port + mac0-mac5 + dhcp is up to 124 characters, so a combined frame is
+        // cut off before mac4/mac5/dhcp and the MAC is silently ignored. This frame is ~62 characters. The firmware
+        // stores it in EEPROM at once and applies it to the W5500 when the next SET_NETWORK (dhcp) arrives.
+        case CMD.SET_MAC: {
+            const request = {};
+            for (let index = 0; index < 6; index += 1) request[`mac${index}`] = payload[index];
             return request;
         }
         case CMD.NETINFO: return { netinfo: 0 };

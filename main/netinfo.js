@@ -17,13 +17,16 @@ function normaliseMac(text) {
     return parts.map((part) => part.toUpperCase()).join(':');
 }
 
-// null when valid, otherwise the reason. Same rule as the firmware: not multicast, not all zero.
+// The first three bytes (the OUI) are fixed at the W5500's own WIZnet block, 00:08:DC: bit 0 (multicast) and bit 1
+// (locally administered) are both clear, as a unicast, globally unique address needs. Only the last three bytes
+// (the NIC specific part) can be changed. Same rule as the firmware, which ignores any other OUI.
+const MAC_OUI = '00:08:DC';
+
+// null when valid, otherwise the reason.
 function macProblem(text) {
     const mac = normaliseMac(text);
-    if (!mac) return 'Enter the MAC address as six hex pairs, for example 00:08:DC:12:34:56.';
-    const bytes = mac.split(':').map((part) => parseInt(part, 16));
-    if (bytes[0] & 1) return 'The first byte of a device MAC address must be even (bit 0 set means multicast).';
-    if (bytes.every((byte) => byte === 0)) return 'A MAC address of all zeros is not valid.';
+    if (!mac) return `Enter the MAC address as six hex pairs, for example ${MAC_OUI}:12:34:56.`;
+    if (!mac.startsWith(`${MAC_OUI}:`)) return `The first three bytes of the MAC address are fixed at ${MAC_OUI}; only the last three can be changed.`;
     return null;
 }
 
@@ -83,4 +86,4 @@ function matchesRequest(info, request) {
     return true;
 }
 
-module.exports = { readControllerInfo, matchesRequest, normaliseMac, macProblem, macBytes };
+module.exports = { readControllerInfo, matchesRequest, normaliseMac, macProblem, macBytes, MAC_OUI };

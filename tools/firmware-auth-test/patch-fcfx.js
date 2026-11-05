@@ -103,7 +103,6 @@ const MACROS = [
     MX_UINT16 w;
     MX_UINT8 q;
     MX_UINT8 macOk = 1;
-    MX_UINT8 macNz = 0;
 
     FCV_ETHMACSET = 0;
     w = FCD_0ee91_flasheeprom2__Read(46);
@@ -114,9 +113,8 @@ const MACROS = [
         w = FCD_0ee91_flasheeprom2__Read(46 + q);
         if (w > 255) { macOk = 0; }
         FCV_ETHMAC[q] = (MX_UINT8)(w & 0xFF);
-        if (FCV_ETHMAC[q] != 0) { macNz = 1; }
       }
-      if (macOk && macNz && ((FCV_ETHMAC[0] & 1) == 0)) { FCV_ETHMACSET = 1; }
+      if (macOk && FCV_ETHMAC[0] == 0x00 && FCV_ETHMAC[1] == 0x08 && FCV_ETHMAC[2] == 0xDC) { FCV_ETHMACSET = 1; }
     }
   }`),
 
@@ -275,7 +273,6 @@ const MACROS = [
       MX_SINT16 jm[6];
       MX_SINT32 mv[6];
       MX_UINT8 good = 1;
-      MX_UINT8 nz = 0;
 
       jm[0] = j;
       jm[1] = FCD_0cc21_JSONDecoder1__FindName("mac1", 5, 0);
@@ -293,17 +290,21 @@ const MACROS = [
         {
           mv[q] = FCD_0cc21_JSONDecoder1__ReadDataAsNumber(jm[q]);
           if (mv[q] < 0 || mv[q] > 255) { good = 0; }
-          if (mv[q] != 0) { nz = 1; }
         }
       }
-      if (good && nz && ((mv[0] & 1) == 0))
+      if (good && mv[0] == 0x00 && mv[1] == 0x08 && mv[2] == 0xDC)
       {
+        MX_UINT8 saved = 1;
         for (q = 0; q < 6; q++)
         {
-          FCD_0ee91_flasheeprom2__Write(46 + q, (MX_UINT16)mv[q]);
-          FCV_ETHMAC[q] = (MX_UINT8)mv[q];
+          if (FCD_0ee91_flasheeprom2__Write(46 + q, (MX_UINT16)mv[q]) != 0) { saved = 0; }
+          if (FCD_0ee91_flasheeprom2__Read(46 + q) != (MX_UINT16)mv[q]) { saved = 0; }
         }
-        FCV_ETHMACSET = 1;
+        if (saved)
+        {
+          for (q = 0; q < 6; q++) { FCV_ETHMAC[q] = (MX_UINT8)mv[q]; }
+          FCV_ETHMACSET = 1;
+        }
       }
     }
   }`),

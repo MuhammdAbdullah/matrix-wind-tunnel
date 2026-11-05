@@ -19,6 +19,9 @@ function startMock({ port = 0, legacy = false, usbLive = false, stallAfterHi = f
         // Close codes the server saw from clients: 1006 = the client vanished without a close handshake.
         closeCodes: [],
         unverifiedCommands: 0,
+        oversizedFrames: 0,
+        // A MAC received in its own frame: stored at once, applied to the network when the next dhcp frame arrives.
+        storedMac: null,
         // How many times a failed client made the controller re-run DHCP (renew its address).
         renewals: 0
     };
@@ -45,6 +48,9 @@ function startMock({ port = 0, legacy = false, usbLive = false, stallAfterHi = f
 
         ws.on('message', (data) => {
             let message;
+            // The firmware reads a request into a 100-byte buffer (FCM_ParseJSON): a longer frame is cut off, loses its
+            // closing keys and does nothing useful. The mock drops it so an oversized frame fails here too.
+            if (data.length > 99) { controller.oversizedFrames += 1; return; }
             try { message = JSON.parse(data.toString('utf8')); } catch (_error) { return; }
             if (client.phase === 'hi') {
                 if (!('hi' in message)) { controller.unverifiedCommands += 1; drop(0); return; }
@@ -67,12 +73,19 @@ function startMock({ port = 0, legacy = false, usbLive = false, stallAfterHi = f
             else if ('fanspeed' in message) controller.fanSpeed = Number(message.fanspeed);
             else if ('netinfo' in message) send({ ip: controller.network.ip, port: controller.network.port, dhcp: controller.network.dhcp });
             else if ('macinfo' in message) send({ mac: controller.network.mac, sip: controller.network.sip });
-            else if ('ip0' in message) {
-                controller.network.sip = [message.ip0, message.ip1, message.ip2, message.ip3].join('.');
-                controller.network.port = Number(message.port);
-                controller.network.dhcp = Number(message.dhcp);
-                if ('mac0' in message) controller.network.mac = [0, 1, 2, 3, 4, 5].map((index) => Number(message[`mac${index}`]).toString(16).padStart(2, '0')).join(':').toUpperCase();
-                controller.network.ip = controller.network.dhcp ? controller.network.ip : controller.network.sip;
+            else {
+                if (['mac0', 'mac1', 'mac2', 'mac3', 'mac4', 'mac5'].every((key) => key in message)) {
+                    // Like the firmware: the OUI (mac0-mac2) is fixed at 00:08:DC, anything else is ignored.
+                    const mac = [0, 1, 2, 3, 4, 5].map((index) => Number(message[`mac${index}`]).toString(16).padStart(2, '0')).join(':').toUpperCase();
+                    if (mac.startsWith('00:08:DC:')) controller.storedMac = mac;
+                }
+                if ('ip0' in message) {
+                    controller.network.sip = [message.ip0, message.ip1, message.ip2, message.ip3].join('.');
+                    controller.network.port = Number(message.port);
+                    controller.network.dhcp = Number(message.dhcp);
+                    if (controller.storedMac) controller.network.mac = controller.storedMac;
+                    controller.network.ip = controller.network.dhcp ? controller.network.ip : controller.network.sip;
+                }
             }
         });
     });

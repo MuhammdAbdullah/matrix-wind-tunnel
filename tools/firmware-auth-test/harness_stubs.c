@@ -14,7 +14,8 @@ MX_UINT16 TMR1 = 77, TMR7 = 99;
 char wire[64][256]; int wires = 0; int connected = 1; int disconnects = 0; int fan = -1;
 MX_UINT16 EE[256];
 MX_UINT16 FCD_0ee91_flasheeprom2__Read(MX_UINT8 a) { return EE[a]; }
-MX_UINT8 FCD_0ee91_flasheeprom2__Write(MX_UINT8 a, MX_UINT16 v) { EE[a] = v; return 0; }
+int ee_fail_addr = -1; /* tests set this to make Write to that address fail (returns 1, stores nothing) */
+MX_UINT8 FCD_0ee91_flasheeprom2__Write(MX_UINT8 a, MX_UINT16 v) { if ((int)a == ee_fail_addr) return 1; EE[a] = v; return 0; }
 const char *JSON;
 MX_SINT16 FCD_0cc21_JSONDecoder1__FindName(MX_CHAR *n, MX_UINT16 sz, MX_UINT16 skip)
 { char k[32]; const char *p; snprintf(k, 32, "\"%s\":", n); p = strstr(JSON, k); return p ? (MX_SINT16)(p - JSON) : -1; }

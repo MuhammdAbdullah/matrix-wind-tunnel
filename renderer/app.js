@@ -679,6 +679,9 @@ async function ensureAdminUnlocked() {
 const SCALER_INPUT_IDS = ['liftScaler', 'dragScaler', 'pressureScaler'];
 const SCALER_MODE_IDS = ['liftMode', 'dragMode', 'pressureMode'];
 let scalerBusy = false;
+// What the controller currently holds for each channel. The sensor-reading helper scales this (the firmware
+// shows (raw - zero) * scaler), so it must not read the scale factor box, which the helper itself overwrites.
+const storedScalers = [null, null, null];
 
 function setScalerBusy(busy) {
     scalerBusy = busy;
@@ -693,6 +696,10 @@ async function refreshScalers() {
         $('liftScaler').value = scalers.lift;
         $('dragScaler').value = scalers.drag;
         $('pressureScaler').value = scalers.pressure;
+        storedScalers[0] = scalers.lift;
+        storedScalers[1] = scalers.drag;
+        storedScalers[2] = scalers.pressure;
+        ['lift', 'drag', 'pressure'].forEach((name) => { $(`${name}Reading`).value = ''; });
         // The fields now hold absolute values, so a Relative mode left selected would square them on Save.
         SCALER_MODE_IDS.forEach((id) => { $(id).value = '0'; });
     } catch (error) { log(`Could not read scalers: ${error.message}`, 'error'); }
@@ -712,16 +719,20 @@ $('scalerZero').addEventListener('click', async () => {
         log(message, 'error');
     } finally { setScalerBusy(false); }
 });
-// The operator types what the sensor is reading; the scale factor box is filled with numerator / reading
-// (4905 for lift and drag, 1000 for pressure). Nothing changes until a positive number is typed, and nothing
-// reaches the controller until Save.
-['lift', 'drag', 'pressure'].forEach((name) => {
+// The operator types what the sensor is reading; the scale factor box is filled with the new absolute scaler,
+// stored scaler * numerator / reading (numerator 4905 for lift and drag, 1000 for pressure), because the
+// reading already includes the stored scaler. Nothing changes until a positive number is typed, and nothing
+// reaches the controller until Save (in Absolute mode).
+['lift', 'drag', 'pressure'].forEach((name, channel) => {
     $(`${name}Reading`).addEventListener('input', (event) => {
         const reading = Number(event.target.value);
         if (event.target.value === '' || !Number.isFinite(reading) || reading <= 0) return;
-        const factor = Number(event.target.dataset.numerator) / reading;
-        if (factor > 1e6) return;
-        $(`${name}Scaler`).value = factor.toFixed(6);
+        const stored = storedScalers[channel];
+        if (!Number.isFinite(stored) || stored <= 0) return;
+        const scaler = stored * Number(event.target.dataset.numerator) / reading;
+        if (scaler > 1e6) return;
+        $(`${name}Scaler`).value = scaler.toFixed(6);
+        $(SCALER_MODE_IDS[channel]).value = '0';
     });
 });
 document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => {
@@ -742,6 +753,8 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
             // a Relative factor in a second time.
             $(inputId).value = mode === 0 ? result.sentValue : result.newValue;
             $(modeId).value = '0';
+            storedScalers[channel] = result.newValue;
+            $(`${['lift', 'drag', 'pressure'][channel]}Reading`).value = '';
         }
         $('scalerAck').textContent = result.message;
         log(result.message, result.ok ? 'info' : 'error');
@@ -1113,14 +1126,37 @@ async function refreshNetworkSettings() {
 
 // ----- controller network identity ----------------------------------------------------
 
-const MAC_PATTERN = /^[0-9a-fA-F]{2}([:-][0-9a-fA-F]{2}){5}$/;
+// The first three bytes are fixed (the W5500's own WIZnet block); only the last three are typed. Mirrors main/netinfo.js.
+const MAC_OUI = '00:08:DC';
+const MAC_SUFFIX_PATTERN = /^[0-9a-fA-F]{2}([:-][0-9a-fA-F]{2}){2}$/;
 
-function macProblem(text) {
-    if (!MAC_PATTERN.test(text)) return 'Enter the MAC address as six hex pairs, for example 00:08:DC:12:34:56.';
-    if (parseInt(text.slice(0, 2), 16) & 1) return 'The first byte of a device MAC address must be even (an odd first byte means multicast).';
-    if (/^[0:-]+$/.test(text)) return 'A MAC address of all zeros is not valid.';
+function macSuffixProblem(text) {
+    if (!MAC_SUFFIX_PATTERN.test(text)) return `Enter the last three bytes of the MAC address as three hex pairs, for example 12:34:56 (the first three bytes are fixed at ${MAC_OUI}).`;
     return null;
 }
+
+// The last three bytes of a controller-reported MAC, for the edit field.
+function macSuffixOf(mac) {
+    return String(mac || '').toUpperCase().split(/[:-]/).slice(3).join(':');
+}
+
+// Types the colons for the operator: hex digits only, upper case, a ":" after every second digit, at most three bytes.
+// Backspace is left alone so the colon can be deleted. Pasting a full MAC keeps just its last three bytes.
+function formatMacSuffix(text, deleting) {
+    let digits = String(text).replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+    if (digits.length === 12 && digits.startsWith(MAC_OUI.replace(/:/g, ''))) digits = digits.slice(6);
+    digits = digits.slice(0, 6);
+    const pairs = digits.match(/.{1,2}/g) || [];
+    let formatted = pairs.join(':');
+    if (!deleting && digits.length > 0 && digits.length < 6 && digits.length % 2 === 0) formatted += ':';
+    return formatted;
+}
+$('networkMac').addEventListener('input', (event) => {
+    const field = event.target;
+    const deleting = Boolean(event.inputType && event.inputType.startsWith('delete'));
+    const formatted = formatMacSuffix(field.value, deleting);
+    if (formatted !== field.value) field.value = formatted;
+});
 
 function syncDhcpFields() {
     $('networkIp').disabled = $('networkDhcp').checked;
@@ -1156,7 +1192,7 @@ function renderControllerNetwork(value) {
             $('networkDhcp').checked = info.dhcp;
             $('networkIp').value = info.staticIp;
             $('networkPort').value = info.port;
-            $('networkMac').value = info.mac;
+            $('networkMac').value = macSuffixOf(info.mac);
             syncDhcpFields();
         }
         shownControllerReadAt = info.readAt;
@@ -1185,15 +1221,18 @@ $('saveNetwork').addEventListener('click', async () => {
         return;
     }
     const info = ((lastNetworkValue || {}).network || {}).controller;
-    const macText = $('networkMac').value.trim();
+    const macSuffix = $('networkMac').value.trim();
     let mac;
-    if (macText) {
-        const problem = macProblem(macText);
+    if (macSuffix) {
+        const problem = macSuffixProblem(macSuffix);
         if (problem) { $('networkAck').textContent = problem; return; }
         // Only a MAC that differs from the reported one is sent, so an unchanged field never rewrites it.
+        const wanted = `${MAC_OUI}:${macSuffix.replace(/-/g, ':').toUpperCase()}`;
         const reported = info && info.supported && info.mac ? info.mac.toUpperCase() : '';
-        if (reported !== macText.replace(/-/g, ':').toUpperCase()) mac = macText;
+        if (reported !== wanted) mac = wanted;
     }
+    // The MAC is a device identity: re-ask for the Admin password if the session lapsed while this tab sat open.
+    if (!(await ensureAdminUnlocked())) { $('networkAck').textContent = 'Admin session is locked - nothing was sent.'; return; }
     const [ip0, ip1, ip2, ip3] = octets.length === 4 ? octets : [192, 168, 1, 150];
     const lines = [dhcp ? `Obtain the address by DHCP, port ${port}.` : `Static address ${ip0}.${ip1}.${ip2}.${ip3}, port ${port}.`];
     if (mac) lines.push(`MAC address ${mac.replace(/-/g, ':').toUpperCase()}. A new MAC is a new identity for the router's DHCP, so the controller may get a different address.`);

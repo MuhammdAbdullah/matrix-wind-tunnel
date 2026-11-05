@@ -250,6 +250,8 @@ async function setLutFan({ percent }) {
 // so the write itself is only ever "sent". Over USB the controller is then asked what it holds (netinfo/macinfo):
 // the result is `acknowledged` only when that read-back matches the request. Over Ethernet the link drops while
 // the controller restarts its network, so there is no read-back; the Network tab refreshes after it reconnects.
+// The controller writes and verifies six flash cells for the MAC before it reads the next frame.
+const MAC_SAVE_DELAY_MS = 500;
 const NETWORK_READBACK_ATTEMPTS = 4;
 const NETWORK_READBACK_FIRST_DELAY_MS = 1500;
 const NETWORK_READBACK_RETRY_DELAY_MS = 2500;
@@ -266,15 +268,20 @@ async function setNetwork({ ip0, ip1, ip2, ip3, port, dhcp = false, mac = null }
         const problem = netinfo.macProblem(mac);
         if (problem) return { ok: false, acknowledged: false, message: problem };
     }
-    const payload = Buffer.alloc(wantMac ? 13 : 7);
+    const payload = Buffer.alloc(7);
     octets.forEach((octet, index) => { payload[index] = octet; });
     payload.writeUInt16LE(portNumber, 4);
     payload[6] = dhcp ? 1 : 0;
-    if (wantMac) Buffer.from(netinfo.macBytes(mac)).copy(payload, 7);
     const address = octets.join('.');
     const request = { ip: address, port: portNumber, dhcp: Boolean(dhcp), mac: wantMac ? netinfo.normaliseMac(mac) : null };
     const viaEthernet = state.transport === 'ethernet';
     try {
+        // The MAC goes first and in its own frame (see jsonRequestFor in serial.js): the controller stores it, then the
+        // network frame's dhcp key makes it apply the MAC to the W5500 before it requests or sets the address.
+        if (wantMac) {
+            await serial.sendBinary(CMD.SET_MAC, Buffer.from(netinfo.macBytes(mac)), { source: 'calibrator' });
+            await wait(MAC_SAVE_DELAY_MS);
+        }
         await serial.sendBinary(CMD.SET_NETWORK, payload, { source: 'calibrator' });
     } catch (error) {
         return { ok: false, acknowledged: false, message: `Network settings were not sent: ${error.message}` };

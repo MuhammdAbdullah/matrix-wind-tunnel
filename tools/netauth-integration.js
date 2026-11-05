@@ -55,7 +55,10 @@ module.exports = async function integration(test) {
 
     await test('netinfo.js: MAC validation and read-back matching', async () => {
         assert.strictEqual(netinfo.macProblem('00:08:DC:12:34:56'), null);
+        assert.strictEqual(netinfo.macProblem('00-08-dc-00-00-00'), null, 'the default MAC (restore) is allowed');
         assert.ok(netinfo.macProblem('01:08:DC:12:34:56'), 'multicast must be refused');
+        assert.ok(netinfo.macProblem('02:08:DC:12:34:56'), 'locally administered OUI must be refused');
+        assert.ok(netinfo.macProblem('00:08:DD:12:34:56'), 'any other OUI must be refused');
         assert.ok(netinfo.macProblem('00:00:00:00:00:00'), 'all-zero must be refused');
         assert.ok(netinfo.macProblem('00:08:DC:12:34'), 'short MAC must be refused');
         const info = { supported: true, dhcp: false, port: 1245, ip: '10.0.0.9', staticIp: '10.0.0.9', mac: '02:01:00:00:00:10' };

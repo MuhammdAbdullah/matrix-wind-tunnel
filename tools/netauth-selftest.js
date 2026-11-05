@@ -121,9 +121,23 @@ const assertPoliteCloses = async (mock) => {
         const info = await requestOnce(ethernet, '{"netinfo":0}');
         assert.deepStrictEqual(info, { ip: '192.168.1.150', port: 1245, dhcp: 1 });
         assert.deepStrictEqual(await requestOnce(ethernet, '{"macinfo":0}'), { mac: '00:08:DC:00:00:00', sip: '192.168.1.150' });
-        ethernet.write(Buffer.from('{"ip0":10,"ip1":0,"ip2":0,"ip3":9,"port":2000,"mac0":2,"mac1":1,"mac2":0,"mac3":0,"mac4":0,"mac5":16,"dhcp":0}'), () => {});
+        // One combined frame is up to 124 characters, over the firmware's 100-byte request buffer: it is ignored.
+        ethernet.write(Buffer.from('{"ip0":192,"ip1":168,"ip2":100,"ip3":150,"port":1245,"mac0":0,"mac1":8,"mac2":220,"mac3":171,"mac4":205,"mac5":239,"dhcp":1}'), () => {});
         await wait(100);
-        assert.deepStrictEqual(await requestOnce(ethernet, '{"macinfo":0}'), { mac: '02:01:00:00:00:10', sip: '10.0.0.9' });
+        assert.strictEqual(mock.oversizedFrames, 1);
+        assert.deepStrictEqual(await requestOnce(ethernet, '{"macinfo":0}'), { mac: '00:08:DC:00:00:00', sip: '192.168.1.150' });
+        // The app's way: the MAC in its own frame, then the network frame whose dhcp key applies it.
+        ethernet.write(Buffer.from('{"mac0":0,"mac1":8,"mac2":220,"mac3":0,"mac4":0,"mac5":16}'), () => {});
+        await wait(100);
+        ethernet.write(Buffer.from('{"ip0":10,"ip1":0,"ip2":0,"ip3":9,"port":2000,"dhcp":0}'), () => {});
+        await wait(100);
+        assert.deepStrictEqual(await requestOnce(ethernet, '{"macinfo":0}'), { mac: '00:08:DC:00:00:10', sip: '10.0.0.9' });
+        // Any other OUI is ignored (the firmware only accepts 00:08:DC as the first three bytes).
+        ethernet.write(Buffer.from('{"mac0":2,"mac1":1,"mac2":0,"mac3":0,"mac4":0,"mac5":32}'), () => {});
+        await wait(100);
+        ethernet.write(Buffer.from('{"ip0":10,"ip1":0,"ip2":0,"ip3":9,"port":2000,"dhcp":0}'), () => {});
+        await wait(100);
+        assert.deepStrictEqual(await requestOnce(ethernet, '{"macinfo":0}'), { mac: '00:08:DC:00:00:10', sip: '10.0.0.9' });
         await closePort(ethernet);
     }));
 

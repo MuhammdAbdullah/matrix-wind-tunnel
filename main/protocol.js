@@ -14,7 +14,8 @@ const CMD = {
     ENTER_BOOTLOADER: 'N',
     // Ethernet access control / network identity (docs/ethernet-access-control.md). Flat JSON only.
     NETINFO: 'O',
-    MACINFO: 'P'
+    MACINFO: 'P',
+    SET_MAC: 'Q'
 };
 
 const START_MARKER = 0x3A;

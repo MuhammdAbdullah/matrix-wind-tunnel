@@ -526,6 +526,20 @@
     <div class="modal-backdrop"><button type="button" id="aerofoilAngleBackdrop">Close</button></div>
 </div>
 
+<div id="sweepStartModal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Motor Moving to Start Position</h3>
+        <p class="text-xs opacity-60 mt-1">The motor has been sent to <span id="sweepStartModalAngle" class="font-semibold">0</span>°. Click OK once it has reached that position and the sweep will start recording immediately.</p>
+        <form id="sweepStartForm" method="dialog">
+            <div class="modal-action">
+                <button type="button" id="sweepStartCancel" class="btn btn-sm btn-outline">Cancel</button>
+                <button type="submit" id="sweepStartOk" class="btn btn-sm btn-primary">OK</button>
+            </div>
+        </form>
+    </div>
+    <div class="modal-backdrop"><button type="button" id="sweepStartBackdrop">Close</button></div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="charts.js"></script>
 <script src="app.js"></script>

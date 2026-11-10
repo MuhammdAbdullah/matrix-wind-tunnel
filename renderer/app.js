@@ -525,9 +525,41 @@ $('traceVisPressure').addEventListener('change', (event) => onTraceVisibilityCha
 $('customXSelect').addEventListener('change', (event) => window.windTunnel.setCustomAxes(event.target.value, $('customYSelect').value));
 $('customYSelect').addEventListener('change', (event) => window.windTunnel.setCustomAxes($('customXSelect').value, event.target.value));
 
+// Angle sweeps: the motor's travel time to the start angle is not reported back by the controller,
+// so the operator confirms the arrival. Resolves true on OK, false on cancel.
+function confirmMotorAtStart(angle) {
+    return new Promise((resolve) => {
+        const modal = $('sweepStartModal');
+        const form = $('sweepStartForm');
+        $('sweepStartModalAngle').textContent = angle;
+        modal.classList.add('modal-open');
+        $('sweepStartOk').focus();
+        const done = (result) => {
+            form.removeEventListener('submit', onSubmit);
+            $('sweepStartCancel').removeEventListener('click', onCancel);
+            $('sweepStartBackdrop').removeEventListener('click', onCancel);
+            modal.classList.remove('modal-open');
+            resolve(result);
+        };
+        const onCancel = () => done(false);
+        const onSubmit = (event) => { event.preventDefault(); done(true); };
+        form.addEventListener('submit', onSubmit);
+        $('sweepStartCancel').addEventListener('click', onCancel);
+        $('sweepStartBackdrop').addEventListener('click', onCancel);
+    });
+}
+
 $('startSweep').addEventListener('click', async () => {
     const options = { start: Number($('sweepStart').value), end: Number($('sweepEnd').value), step: Number($('sweepStep').value), delay: Number($('sweepDelay').value) * 1000 };
-    const result = state.currentExperiment.sweepType === 'angle' ? await window.windTunnel.startAngleSweep(options) : await window.windTunnel.startFanSweep(options);
+    if (state.currentExperiment.sweepType === 'angle') {
+        const startAngle = Math.min(180, Math.max(-180, Math.round(options.start) || 0));
+        const moved = await window.windTunnel.setAngle(startAngle);
+        if (moved && moved.ok === false) { log(moved.message || 'Could not move the motor to the start angle', 'error'); return; }
+        log(`Motor moving to sweep start angle ${startAngle}°`);
+        if (!await confirmMotorAtStart(startAngle)) { log('Sweep cancelled'); return; }
+        options.startReady = true;
+    }
+    const result =state.currentExperiment.sweepType === 'angle' ? await window.windTunnel.startAngleSweep(options) : await window.windTunnel.startFanSweep(options);
     if (result.canceled) { log(result.message); return; }
     log(result.ok ? `${state.currentExperiment.sweepType === 'angle' ? 'Angle' : 'Fan'} sweep started` : result.message, result.ok ? 'info' : 'error');
 });

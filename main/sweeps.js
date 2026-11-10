@@ -137,7 +137,9 @@ async function advanceFanSpeedOnLog(experiment) {
 // visible on the first logged point after a big jump to the sweep's start angle). Scale the wait
 // by how far this particular move actually travelled relative to one normal step, instead of
 // always using the configured per-step delay verbatim.
-async function tick(moveActuator, fromValue, token) {
+// `immediate` skips the settle wait for the sweep's first point: the operator has already
+// confirmed the motor is sitting at the start position, so reading straight away is correct.
+async function tick(moveActuator, fromValue, token, immediate = false) {
     if (token !== sweepToken || !state.sweep.running) return;
     if (!state.connected) { stopSweep(); return; }
     const target = state.sweep.current;
@@ -146,7 +148,7 @@ async function tick(moveActuator, fromValue, token) {
 
     const distance = Math.abs(target - fromValue);
     const normalStep = Math.abs(state.sweep.step) || 1;
-    const settleDelay = Math.max(state.sweep.delay, Math.round(state.sweep.delay * (distance / normalStep)));
+    const settleDelay = immediate ? 0 : Math.max(state.sweep.delay, Math.round(state.sweep.delay * (distance / normalStep)));
 
     sweepTimer = setTimeout(async () => {
         if (token !== sweepToken || !state.sweep.running) return; // stopped during the settle wait
@@ -205,7 +207,7 @@ function startSweep(type, options, moveActuator) {
     publish();
 
     const fromValue = type === 'angle' ? state.angle : state.fanSpeed;
-    tick(moveActuator, fromValue, sweepToken);
+    tick(moveActuator, fromValue, sweepToken, Boolean(options.startReady));
     return { ok: true, sweep: state.sweep };
 }
 

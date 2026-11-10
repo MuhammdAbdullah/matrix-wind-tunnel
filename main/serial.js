@@ -261,11 +261,21 @@ function rejectPending(error) {
     request.reject(error);
 }
 
+// JSON.stringify writes -1 as `-1`, but the firmware's FCI_STRING_TO_FLOAT (Flowcode CAL, PIC16BIT) returns
+// early for text with no decimal point and skips its negate step, so `"senscale":-1` is stored as +1. With a
+// decimal point (`-1.000000`, the legacy calibrator's encoding) the sign is applied. Fractions such as -0.5
+// already carry one, so only whole-number scalers need the fraction added.
+function encodeRequest(command, request) {
+    const json = JSON.stringify(request);
+    if (command !== CMD.SET_SCALER) return json;
+    return json.replace(/("senscale":-?\d+)(?=[,}])/, '$1.000000');
+}
+
 function sendJsonAttempt(command, payload, timeout, expectResponse = true) {
     return new Promise((resolve, reject) => {
         const port = serialPort;
         if (!port || !port.isOpen) { reject(new LinkError('Controller is not connected')); return; }
-        const packet = Buffer.from(JSON.stringify(jsonRequestFor(command, payload)));
+        const packet = Buffer.from(encodeRequest(command, jsonRequestFor(command, payload)));
         const request = { command, resolve, reject, timer: null };
         // Identity checks: a timer or write callback from an earlier attempt must never clear or
         // reject a newer command that has since become the pending one.

@@ -79,8 +79,12 @@ const WindTunnelCharts = (() => {
                             const labels = original.call(this, chart);
                             labels.forEach((label, index) => {
                                 const meta = chart.getDatasetMeta(index);
-                                const isHidden = meta.hidden === true || (meta.hidden === null && chart.data.datasets[index].hidden === true);
+                                const dataset = chart.data.datasets[index];
+                                const isHidden = meta.hidden === true || (meta.hidden === null && dataset.hidden === true);
                                 label.fillStyle = isHidden ? 'transparent' : label.strokeStyle;
+                                // With usePointStyle Chart.js reads the style of the first POINT, which has no
+                                // borderDash, so every swatch came out solid. Take the dash from the dataset.
+                                label.lineDash = dataset.borderDash || [];
                             });
                             return labels;
                         }

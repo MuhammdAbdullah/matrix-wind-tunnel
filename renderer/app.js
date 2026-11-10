@@ -258,6 +258,9 @@ function render(value) {
     state.sweepRunning = value.sweep.running;
     updateLutLive(value);
     updateScalerLive(value);
+    if (scalerReadFailed && value.connected && !value.linkDegraded && !scalerBusy && !scalerRefresh) {
+        refreshScalers({ keepReadings: true });
+    }
 
     const customAxesChanged = value.customAxes && (value.customAxes.x !== state.customAxes.x || value.customAxes.y !== state.customAxes.y);
     if (value.customAxes) state.customAxes = value.customAxes;
@@ -760,6 +763,9 @@ let scalerBusy = false;
 // What the controller currently holds for each channel. The sensor-reading helper scales this (the firmware
 // shows (raw - zero) * scaler), so it must not read the scale factor box, which the helper itself overwrites.
 const storedScalers = [null, null, null];
+// True while the note shows a failed scaler read. render() re-reads once the controller is connected, so a
+// read that failed because the link was still coming up does not leave a stale "not connected" message.
+let scalerReadFailed = false;
 
 // The note under the scalers. Failures are shown in the error colour at full strength: the default text is
 // faint and small, so a "could not work out a factor" message was easy to miss.
@@ -800,9 +806,14 @@ async function loadScalers({ keepReadings = false } = {}) {
         if (!keepReadings) ['lift', 'drag', 'pressure'].forEach((name) => { $(`${name}Reading`).value = ''; });
         // The fields now hold absolute values, so a Relative mode left selected would square them on Save.
         SCALER_MODE_IDS.forEach((id) => { $(id).value = '0'; });
+        // A "could not read" message from an earlier attempt no longer applies; leave any other note alone.
+        if (scalerReadFailed) setScalerNote('Scalers read from the controller.');
+        scalerReadFailed = false;
         return true;
     } catch (error) {
         storedScalers.fill(null);
+        // Only a link that was down is retried automatically; any other failure waits for Refresh.
+        scalerReadFailed = /not connected/i.test(error.message);
         const message = /not connected/i.test(error.message)
             ? 'The controller is not connected, so its current scalers cannot be read and a sensor reading cannot be turned into a scale factor. Connect the controller, then type the reading again (the boxes only show page defaults, not values from the controller).'
             : `Could not read the scalers from the controller: ${error.message}. The boxes below are not the controller's values - press Refresh.`;

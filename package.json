@@ -1,6 +1,6 @@
 {
     "name": "matrix-wind-tunnel",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "Matrix Wind Tunnel Control and Calibrator",
     "main": "main.js",
     "private": true,

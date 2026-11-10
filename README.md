@@ -311,7 +311,7 @@ This directory is an independent Git repository. Commit and push from here only;
 
 ## Release notes
 
-### Unreleased
+### v1.0.3
 
 - Fix: Admin > Calibrator > Sensor Scalers kept showing the red "The controller is not connected..." message after the controller had connected. The scalers are read when the tab opens, and a read that failed because the link was still coming up was never repeated. The page now re-reads the scalers by itself as soon as the controller is connected and responding, and replaces the red message with "Scalers read from the controller." Only a "not connected" failure is retried automatically; other read errors still wait for **Refresh**. Renderer only; nothing new is sent to the controller.
 

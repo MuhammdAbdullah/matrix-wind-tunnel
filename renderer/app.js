@@ -183,7 +183,7 @@ function setView(view) {
 function switchAdminTab(tabName) {
     document.querySelectorAll('.admin-tabs .tab-button').forEach((button) => button.classList.toggle('active', button.dataset.adminTab === tabName));
     document.querySelectorAll('#adminView > .tab-content').forEach((pane) => pane.classList.toggle('active', pane.id === `${tabName}Tab`));
-    if (tabName === 'calibrator') { refreshScalers(); refreshLut(); }
+    if (tabName === 'calibrator') { refreshScalers({ keepReadings: true }); refreshLut(); }
     if (tabName === 'network') refreshNetworkSettings();
 }
 
@@ -628,7 +628,53 @@ $('liveWindowSelect').addEventListener('change', (event) => {
 });
 $('clearLog').addEventListener('click', () => { $('log').innerHTML = ''; });
 
+// Every password box gets a show/hide eye and a Caps Lock warning. Caps Lock state is only readable from a
+// key event, so the warning appears on the first key pressed in the box and clears on blur.
+const EYE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+const passwordFields = [];
+
+function setPasswordRevealed(field, revealed) {
+    field.input.type = revealed ? 'text' : 'password';
+    field.toggle.innerHTML = revealed ? EYE_OFF_ICON : EYE_ICON;
+    field.toggle.setAttribute('aria-label', revealed ? 'Hide password' : 'Show password');
+    field.toggle.setAttribute('aria-pressed', String(revealed));
+}
+
+function resetPasswordFields() {
+    passwordFields.forEach((field) => { setPasswordRevealed(field, false); field.caps.classList.add('hidden'); });
+}
+
+document.querySelectorAll('input[type="password"]').forEach((input) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'password-field';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'password-toggle';
+    wrap.appendChild(toggle);
+
+    const caps = document.createElement('p');
+    caps.className = 'caps-warning hidden';
+    caps.textContent = 'Caps Lock is on';
+    wrap.insertAdjacentElement('afterend', caps);
+
+    const field = { input, toggle, caps };
+    passwordFields.push(field);
+    setPasswordRevealed(field, false);
+    toggle.addEventListener('click', () => { setPasswordRevealed(field, input.type === 'password'); input.focus(); });
+    const checkCaps = (event) => {
+        if (typeof event.getModifierState === 'function') caps.classList.toggle('hidden', !event.getModifierState('CapsLock'));
+    };
+    input.addEventListener('keydown', checkCaps);
+    input.addEventListener('keyup', checkCaps);
+    input.addEventListener('blur', () => caps.classList.add('hidden'));
+});
+
 function openAdminPasswordModal() {
+    resetPasswordFields();
     $('adminPasswordError').classList.add('hidden');
     $('adminPasswordInput').value = '';
     $('adminPasswordModal').classList.add('modal-open');
@@ -663,7 +709,7 @@ async function unlockAdmin() {
                 return;
             }
             $('adminPasswordError').textContent = result.needsSetup ? 'Admin setup required.'
-                : result.unreadable ? 'Admin password file cannot be read (wrong Windows user or damaged). Delete wind-tunnel-admin.json in the app data folder to set a new password.'
+                : result.unreadable ? 'Admin password file cannot be read (wrong Windows user or damaged). Delete wind-tunnel-admin.json in the app data folder to reset to the initial password.'
                 : (result.message || 'Incorrect password.');
             $('adminPasswordError').classList.remove('hidden');
             $('adminPasswordInput').value = '';
@@ -715,13 +761,33 @@ let scalerBusy = false;
 // shows (raw - zero) * scaler), so it must not read the scale factor box, which the helper itself overwrites.
 const storedScalers = [null, null, null];
 
+// The note under the scalers. Failures are shown in the error colour at full strength: the default text is
+// faint and small, so a "could not work out a factor" message was easy to miss.
+function setScalerNote(text, isError = false) {
+    const note = $('scalerAck');
+    note.textContent = text;
+    note.classList.toggle('text-error', isError);
+    note.classList.toggle('opacity-60', !isError);
+}
+
 function setScalerBusy(busy) {
     scalerBusy = busy;
     document.querySelectorAll('.calibration, #refreshScalers, #scalerZero').forEach((button) => { button.disabled = busy; });
 }
 
-async function refreshScalers() {
-    if (scalerBusy) return;
+// A refresh that is still waiting on the controller (it queues behind sensor polling and the table read) is
+// shared: a second caller waits for it instead of being refused, and a typed sensor reading waits for it too,
+// because its completion rewrites the scale factor boxes.
+let scalerRefresh = null;
+function refreshScalers(options) {
+    if (scalerRefresh) return scalerRefresh;
+    if (scalerBusy) return Promise.resolve(false);
+    scalerRefresh = loadScalers(options).finally(() => { scalerRefresh = null; });
+    return scalerRefresh;
+}
+// Resolves true when the controller's scalers were read and the fields refreshed. A failed read leaves
+// storedScalers empty (the boxes then only hold the page defaults) and says so on the page, not just in the log.
+async function loadScalers({ keepReadings = false } = {}) {
     setScalerBusy(true);
     try {
         const scalers = await window.windTunnel.getScalers();
@@ -731,41 +797,67 @@ async function refreshScalers() {
         storedScalers[0] = scalers.lift;
         storedScalers[1] = scalers.drag;
         storedScalers[2] = scalers.pressure;
-        ['lift', 'drag', 'pressure'].forEach((name) => { $(`${name}Reading`).value = ''; });
+        if (!keepReadings) ['lift', 'drag', 'pressure'].forEach((name) => { $(`${name}Reading`).value = ''; });
         // The fields now hold absolute values, so a Relative mode left selected would square them on Save.
         SCALER_MODE_IDS.forEach((id) => { $(id).value = '0'; });
-    } catch (error) { log(`Could not read scalers: ${error.message}`, 'error'); }
-    finally { setScalerBusy(false); }
+        return true;
+    } catch (error) {
+        storedScalers.fill(null);
+        const message = /not connected/i.test(error.message)
+            ? 'The controller is not connected, so its current scalers cannot be read and a sensor reading cannot be turned into a scale factor. Connect the controller, then type the reading again (the boxes only show page defaults, not values from the controller).'
+            : `Could not read the scalers from the controller: ${error.message}. The boxes below are not the controller's values - press Refresh.`;
+        setScalerNote(message, true);
+        log(message, 'error');
+        return false;
+    } finally { setScalerBusy(false); }
 }
-$('refreshScalers').addEventListener('click', refreshScalers);
+$('refreshScalers').addEventListener('click', () => refreshScalers());
 $('scalerZero').addEventListener('click', async () => {
     if (scalerBusy) return;
     setScalerBusy(true);
     try {
         const result = await window.windTunnel.zeroSensors();
-        $('scalerAck').textContent = result.message;
+        setScalerNote(result.message, !result.ok);
         log(result.message, result.ok ? 'info' : 'error');
     } catch (error) {
         const message = `Zero sensors failed: ${error.message}`;
-        $('scalerAck').textContent = message;
+        setScalerNote(message, true);
         log(message, 'error');
     } finally { setScalerBusy(false); }
 });
 // The operator types what the sensor is reading; the scale factor box is filled with the new absolute scaler,
 // stored scaler * numerator / reading (numerator 4905 for lift and drag, 1000 for pressure), because the
 // reading already includes the stored scaler. Nothing changes until a positive number is typed, and nothing
-// reaches the controller until Save (in Absolute mode).
+// reaches the controller until Save (in Absolute mode). The stored scaler is read on demand when the tab's
+// own refresh did not succeed, and every case where no factor can be worked out is explained on the page:
+// a silent no-op looks exactly like "the scale factor does not change". A negative stored scaler (an inverted
+// sensor) keeps its sign.
+async function applyScalerReading(name, channel) {
+    const input = $(`${name}Reading`);
+    const valid = () => input.value !== '' && Number.isFinite(Number(input.value)) && Number(input.value) > 0;
+    if (!valid()) return;
+    if (scalerRefresh) await scalerRefresh;
+    if (!Number.isFinite(storedScalers[channel])) {
+        if (scalerBusy) { setScalerNote('Another calibration action is still running - type the reading again when it has finished.', true); return; }
+        if (!(await refreshScalers({ keepReadings: true }))) return;
+    }
+    if (!valid()) return; // edited or cleared while the controller was being read
+    const stored = storedScalers[channel];
+    const fail = (text) => setScalerNote(text, true);
+    if (!Number.isFinite(stored) || stored === 0) {
+        fail(`The controller holds a ${name} scaler of ${stored}, so a sensor reading cannot be turned into a scale factor. Type the scale factor directly and press Save.`);
+        return;
+    }
+    const scaler = stored * Number(input.dataset.numerator) / Number(input.value);
+    if (Math.abs(scaler) > 1e6) {
+        fail(`That ${name} reading gives a scale factor of ${scaler.toExponential(2)}, outside the usable range. Check the value you typed.`);
+        return;
+    }
+    $(`${name}Scaler`).value = scaler.toFixed(6);
+    $(SCALER_MODE_IDS[channel]).value = '0';
+}
 ['lift', 'drag', 'pressure'].forEach((name, channel) => {
-    $(`${name}Reading`).addEventListener('input', (event) => {
-        const reading = Number(event.target.value);
-        if (event.target.value === '' || !Number.isFinite(reading) || reading <= 0) return;
-        const stored = storedScalers[channel];
-        if (!Number.isFinite(stored) || stored <= 0) return;
-        const scaler = stored * Number(event.target.dataset.numerator) / reading;
-        if (scaler > 1e6) return;
-        $(`${name}Scaler`).value = scaler.toFixed(6);
-        $(SCALER_MODE_IDS[channel]).value = '0';
-    });
+    $(`${name}Reading`).addEventListener('input', () => applyScalerReading(name, channel));
 });
 document.querySelectorAll('.calibration').forEach((button) => button.addEventListener('click', async () => {
     if (scalerBusy) return;
@@ -775,7 +867,7 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
     // The raw text goes to the main process, which validates it: Number('') would silently be 0 here.
     setScalerBusy(true);
     try {
-        if (!(await ensureAdminUnlocked())) { $('scalerAck').textContent = 'Admin session is locked - nothing was written.'; return; }
+        if (!(await ensureAdminUnlocked())) { setScalerNote('Admin session is locked - nothing was written.', true); return; }
         const mode = Number($(modeId).value);
         const result = await window.windTunnel.setScaler(channel, mode, $(inputId).value);
         if (result.ok) {
@@ -788,11 +880,11 @@ document.querySelectorAll('.calibration').forEach((button) => button.addEventLis
             storedScalers[channel] = result.newValue;
             $(`${['lift', 'drag', 'pressure'][channel]}Reading`).value = '';
         }
-        $('scalerAck').textContent = result.message;
+        setScalerNote(result.message, !result.ok);
         log(result.message, result.ok ? 'info' : 'error');
     } catch (error) {
         const message = `Scaler write failed: ${error.message}`;
-        $('scalerAck').textContent = message;
+        setScalerNote(message, true);
         log(message, 'error');
     } finally { setScalerBusy(false); }
 }));
